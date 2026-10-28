@@ -4,50 +4,45 @@
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-blue.svg)](https://archlinux.org/)
 [![GUI: PySide6](https://img.shields.io/badge/GUI-PySide6%20(Qt6)-41cd52.svg)](https://wiki.qt.io/Qt_for_Python)
 [![Profile: Cao Mi Le](https://img.shields.io/badge/Profile-Cao%20Mi%20Le%20(%2312k)-ff66aa.svg)](https://osu.ppy.sh/users/10910765)
-[![Release: v1.1.0](https://img.shields.io/badge/Release-v1.1.0-brightgreen.svg)](https://github.com/AtelierMizumi/osu-farm-downloader/releases)
+[![Release: v1.2.0](https://img.shields.io/badge/Release-v1.2.0-brightgreen.svg)](https://github.com/AtelierMizumi/osu-farm-downloader/releases)
 
-Công cụ tìm kiếm, lọc và tải beatmap **song song đa luồng (Parallel Multi-threading)** từ nhiều nguồn Mirror siêu tốc (`osu.direct`, `Catboy/Mino`, `Sayobot`, `Beatconnect`, `Nerinyan`).
+Công cụ tìm kiếm, lọc và tải beatmap **mở rộng toàn diện (Open Catalog Discovery)** từ nhiều nguồn Mirror siêu tốc (`osu.direct`, `Catboy/Mino`, `Sayobot`, `Beatconnect`, `Nerinyan`).
 
-Hỗ trợ **Desktop GUI (PySide6)** phong cách osu! và **Terminal CLI**, tối ưu hóa riêng cho người dùng **Linux** và **osu! stable lưu trên ổ cứng ngoài**, đồng thời tùy chỉnh theo trình độ profile **`Cao Mi Le`** (Rank #12k Global / #155 Việt Nam, ~9,100 PP).
+Hỗ trợ **Desktop GUI (PySide6)** hiện đại lẫn **Terminal CLI**, tối ưu hóa riêng cho người dùng **Linux** và **osu! stable lưu trên ổ cứng ngoài**, đồng thời tùy chỉnh chính xác theo trình độ profile **`Cao Mi Le`** (Rank #12k Global / #155 Việt Nam, ~9,100 PP).
 
 ---
 
-## 🌟 Tính năng vượt trội (So sánh & Chắt lọc từ các tool GitHub)
+## 🌟 Cải tiến đột phá trong v1.2.0: Quét Mở Toàn Bộ Kho Map (Open Traversal)
 
-Dựa trên nghiên cứu các công cụ nổi tiếng trên GitHub như *nzbasic/batch-beatmap-downloader*, *osu-collector*, *NexDirect*, dự án đã chắt lọc và tối ưu các chức năng quan trọng nhất:
+Thay vì giới hạn gò bó vào một vài mapper/artist cũ kỹ (khiến việc tìm kiếm bị cạn kiệt map nếu máy đã tải nhiều), phiên bản 1.2.0 mang đến cuộc cách mạng về logic tìm kiếm:
 
-### 1. ⚡ Tải Song Song Đa Luồng (Parallel Multi-Threading 1 – 8 Threads)
-- Thay vì tải tuần tự từng file mất nhiều thời gian, công cụ phân phối tải song song từ **1 đến 8 luồng đồng thời**.
-- Tốc độ tải thực tế: Đạt **8 – 15 MB/s**, tải 30 mapset trong vòng **chưa đầy 20 – 30 giây**!
-- Cập nhật tiến trình và trạng thái tải chi tiết theo từng dòng trong bảng.
+### 1. 🌍 Loại bỏ hoàn toàn giới hạn theo Mapper / Artist
+- **Khám phá toàn diện:** Kho map osu! có hàng trăm ngàn bài hát từ hàng ngàn mapper tài năng khác nhau. Công cụ quét mở trên toàn bộ danh mục của osu! mà không thiên vị bất kỳ tác giả nào.
+- **Quét sâu nhiều trang đồng thời (Parallel Offset Traversal):** Tự động duyệt qua hàng ngàn mapset (`10 - 50 trang = 1,000 – 5,000 maps`) chỉ trong vài giây.
+- **Đảm bảo luôn có map mới:** Dù trong máy bạn đã có hàng ngàn map, công cụ vẫn luôn đào sâu vào kho lưu trữ để tìm ra hàng chục, hàng trăm map phù hợp chưa từng tải!
 
-### 2. 🎛 Bộ Lọc Tình Trạng Map (Beatmap Status Filter)
-Hỗ trợ lọc chính xác theo trạng thái xếp hạng:
-- **`Ranked` (Mặc định):** Map chính thức, có điểm PP, có Leaderboard.
-- **`Ranked + Approved`:** Bao gồm cả các map kinh điển được phê duyệt (Approved) có tính PP.
-- **`Loved`:** Các map được cộng đồng bình chọn yêu thích, có bảng xếp hạng Leaderboard riêng.
-- **`Qualified`:** Các map đang trong tuần thử nghiệm cuối cùng trước khi vào Ranked.
-- **`Tất cả có Leaderboard`:** Gộp toàn bộ Ranked + Approved + Loved.
-- **`Tất cả trạng thái`:** Bao gồm cả Pending và Graveyard.
+### 2. 🧠 Thuật toán Chấm điểm Farm Dựa trên Chỉ số Kỹ thuật Thực tế
+Độ "dễ farm" được tính toán khách quan 100% dựa trên dữ liệu thật của từng difficulty:
+- **Tỷ lệ Pass Rate ($\frac{\text{Passcount}}{\text{Playcount}}$):** Map có tỷ lệ pass cao ($\ge 20\% - 30\%$) chứng minh pattern mượt, công bằng và không có chốt spike bất ngờ ở cuối bài.
+- **Circle Size (CS) Vàng:** Tỉ lệ vàng của jump farm là **CS 3.8 – 4.3** (hitbox thoải mái). CS $> 4.6$ bị trừ điểm vì đòi hỏi độ chính xác ngón tay quá cao.
+- **Approach Rate (AR) Chuẩn:** AR 9.3 – 9.8 phù hợp phản xạ của rank 12k.
+- **Độ dài TV Size (60s – 135s):** Retry nhanh, đỡ tốn thể lực, ít choke.
+- **Phổ biến:** Lượt chơi & yêu thích từ cộng đồng.
 
-### 3. 🌐 Tùy Chọn Nguồn Mirror Đa Dạng & Smart Fallback
-Hỗ trợ 5 nguồn Mirror hàng đầu với cơ chế tự động chuyển đổi nếu một mirror bị nghẽn:
-1. **osu.direct API** *(Mặc định - Băng thông cao, ổn định nhất)*
-2. **Catboy / Mino (`catboy.best`)** *(Cực kỳ phổ biến trong cộng đồng osu!)*
-3. **Sayobot (`dl.sayobot.cn`)** *(Máy chủ Châu Á, hỗ trợ bản Mini cắt video siêu nhẹ)*
-4. **Beatconnect (`beatconnect.io`)**
-5. **Nerinyan (`api.nerinyan.moe`)**
+### 3. 🎛 Tiêu chí Sắp xếp Linh hoạt (Sort By)
+- `🏆 Dễ farm & Thoải mái nhất (Smart Farm Score)`: Xếp các map có tỷ lệ pass cao, CS/AR đẹp lên đầu.
+- `🔥 Nhiều người chơi nhất (Playcount)`: Các map quốc dân được nhiều người chơi nhất.
+- `❤️ Được yêu thích nhất (Favourites)`: Các map được cộng đồng thả tim nhiều nhất.
+- `🆕 Mới nhất (Newest Ranked)`: Các map vừa mới được xếp hạng gần đây.
+- `⭐ Star Rating tăng / giảm dần`.
 
-### 4. 🎧 Nghe Thử Audio Preview Ngay Trong Ứng Dụng
-- Tích hợp trực tiếp trình phát âm thanh mẫu (`QMediaPlayer` + FFmpeg).
-- Chỉ cần **Double-click vào bất kỳ bài hát nào trong bảng** (hoặc nhấn nút Dừng ở góc trên) để nghe thử đoạn cao trào 10 giây trước khi quyết định tải về!
+### 4. ⚡ Tải Song Song Đa Luồng (Parallel 1 – 8 Threads)
+- Tải đồng thời nhiều bài hát cùng lúc với tốc độ cực nhanh **8 – 15 MB/s**.
+- Hiển thị tiến trình từng hàng trong bảng thời gian thực.
 
-### 5. 🧠 Thuật Toán Smart Farm & Comfort Score (0 – 100)
-- **Tỷ lệ Pass Rate ($\frac{\text{Pass}}{\text{Plays}}$):** Đánh giá pattern mượt mà ($\ge 18\% - 25\%$), phạt các map dễ choke ($< 8\%$).
-- **Hitbox Circle Size (CS) Vàng:** Tỉ lệ vàng của jump farm là **CS 3.8 – 4.3**. Phạt map CS quá nhỏ ($CS > 4.6$).
-- **Approach Rate (AR) Chuẩn:** AR 9.3 – 9.8.
-- **Độ dài TV Size (65s – 150s):** Retry nhanh, đỡ tốn thể lực.
-- **Phân loại Mapper:** Jump Farm (Sotarks, Reform, browiec,...), Flow Aim (Seni, SMOKELIND,...), Stream (Lasse, Awaken,...).
+### 5. 🎧 Nghe Thử Audio Preview Ngay Trong Ứng Dụng
+- Tích hợp trình phát âm thanh mẫu (`QMediaPlayer` + FFmpeg).
+- Chỉ cần **Double-click vào bất kỳ bài hát nào trong bảng** để nghe thử đoạn cao trào 10 giây trước khi quyết định tải!
 
 ### 6. 💾 Tương Thích Hoàn Hảo Ổ Cứng Ngoài & Linux
 - Tự động nhận diện thư mục Songs của osu! stable trên ổ cứng ngoài: `/mnt/SSDStorage/osu!/Songs`.
@@ -64,28 +59,30 @@ osu-dl-gui
 ```
 Giao diện bao gồm:
 * **Thẻ Người chơi:** Profile `Cao Mi Le` (Rank #12k, 9.1k PP, 98.32% Acc) & Star Rating gợi ý.
-* **Bộ phát Audio Preview:** Nghe thử bài hát ngay trên thanh tiêu đề.
-* **Thư mục Songs:** Nhận diện sẵn ổ cứng ngoài, có nút chọn đường dẫn nhanh.
-* **Bộ lọc Presets & Tình trạng:** Chuyển đổi nhanh Nomod, DT, HR, Mapper, Tình trạng map (Ranked/Loved...).
-* **Cài đặt Tải song song & Mirror:** Chọn số luồng (1-8 luồng) và mirror mong muốn.
+* **Bộ lọc Mở Toàn Diện:** Chuyển đổi nhanh Nomod, DT, HR, Tình trạng map (Ranked/Loved...), Tiêu chí sắp xếp và Độ sâu quét.
+* **Từ khóa tự do:** Tìm theo anime, tên bài, thể loại (hoặc để trống để quét tất cả).
 * **Bảng Map & Checkbox:** Chọn bài linh hoạt, xem Farm Score và Tags đánh giá trước khi tải.
+* **Tải song song:** Điều chỉnh số luồng tải từ 1 đến 8 luồng.
 
 ---
 
 ## 💻 Hướng dẫn Dòng lệnh (CLI One-Liner)
 
 ```bash
-# Tải song song 4 luồng 30 map farm Nomod/HD (6.5* - 7.6*):
+# Quét mở toàn bộ kho map đề xuất theo trình độ (6.5* - 7.6* Nomod/HD), tải song song 4 luồng:
 osu-dl --count 30 --threads 4
 
-# Tải 20 map Loved có Star Rating từ 6.8* đến 7.5*:
-osu-dl --status loved --min-sr 6.8 --max-sr 7.5 --count 20
+# Quét sâu 30 trang (3,000 maps) tìm các bài có lượt chơi cao nhất:
+osu-dl --depth 30 --sort plays --count 40
 
-# Tải 20 map của Sotarks ưu tiên nguồn Sayobot:
-osu-dl --mapper Sotarks --mirror sayobot --count 20
+# Tìm kiếm map theo từ khóa tự do (ví dụ: anime, camellia, hololive):
+osu-dl -q "hololive" --min-sr 6.5 --max-sr 7.5 --count 20
 
 # Tải gói DT Farm (tải 6 luồng siêu tốc):
 osu-dl --dt --count 25 --threads 6
+
+# Lọc map Loved có Star Rating từ 6.8* đến 7.6*:
+osu-dl --status loved --min-sr 6.8 --max-sr 7.6 --count 20
 
 # Mở giao diện Desktop GUI:
 osu-dl --gui
@@ -94,7 +91,7 @@ osu-dl --gui
 ---
 
 ## 🎮 Cách nạp map vào osu! stable trên Linux
-1. Sau khi tải xong, các file `.osz` sẽ nằm sẵn trong thư mục `Songs/` trên ổ cứng ngoài.
+1. Sau khi tải xong, các map `.osz` sẽ nằm sẵn trong thư mục `Songs/` trên ổ cứng ngoài.
 2. Mở **osu! stable** trên Linux (qua Wine, Lutris hoặc Bottles).
 3. Vào màn hình **Solo / Song Select** (chọn bài hát).
 4. Nhấn phím **`F5`** trên bàn phím. osu! stable sẽ tự động quét, giải nén và nạp tất cả các map mới vào game ngay lập tức!

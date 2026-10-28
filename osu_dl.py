@@ -2,10 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-osu! Mirror Beatmap Downloader & Farm Filter
+osu! Mirror Beatmap Downloader & Open Farm Filter
 Dành riêng cho Linux & osu! stable trên ổ cứng ngoài
 Tối ưu cho người chơi: Cao Mi Le (Rank #12k, 9.1k PP, SR 6.5* - 7.7*)
-Phiên bản 1.1.0: Tải song song đa luồng, Bộ lọc trạng thái map, Tùy chọn nguồn Mirror
+Phiên bản 1.2.0: Quét toàn diện kho Beatmap mở, Loại bỏ gò bó mapper/artist,
+Lọc thông minh dựa trên Pass Rate, CS, AR, và Tải song song đa luồng.
 """
 
 import os
@@ -40,7 +41,7 @@ def print_banner():
 | | | \\___ \\| | | | | |\\/| || || |_) | |_) | | | | |_) |
 | |_| |___) | |_| | | |  | || ||  _ <|  _ <| |_| |  _ < 
  \\___/|____/ \\___/  |_|  |_|___|_| \\_\\_| \\_\\\\___/|_| \\_\\
-    {C_YELLOW}osu! Ranked Farm Maps Downloader for Linux & External Drive v1.1.0{C_RESET}
+    {C_YELLOW}osu! Open Ranked Farm Maps Downloader (Linux & External Drive) v1.2.0{C_RESET}
 """
     print(banner)
 
@@ -74,8 +75,9 @@ def download_selected_maps_parallel(maps, songs_path, max_workers=4, preferred_m
         diffs_preview = ", ".join([f"{d['name']} ({d['sr']}*)" for d in m['valid_diffs'][:3]])
         if len(m['valid_diffs']) > 3:
             diffs_preview += f" (+{len(m['valid_diffs']) - 3} diffs)"
+        tags_str = " | ".join(m.get("best_tags", [])[:3])
         print(f" {C_CYAN}{i:2d}.{C_RESET} [{m['id']}] {C_BOLD}{m['artist']} - {m['title']}{C_RESET} by {m['creator']}")
-        print(f"     Plays: {m['plays']:,} | Favs: {m['favs']:,} | Diffs: {C_GREEN}{diffs_preview}{C_RESET}")
+        print(f"     Diffs: {C_GREEN}{diffs_preview}{C_RESET} | Điểm: {C_YELLOW}{m['farm_score']}/100{C_RESET} | {C_MAGENTA}{tags_str}{C_RESET}")
     print("-" * 75)
 
     ans = input(f"\n{C_BOLD}Xác nhận tải {len(maps)} mapsets (Song song {max_workers} luồng) vào {songs_path}? (Y/n): {C_RESET}").strip().lower()
@@ -83,7 +85,7 @@ def download_selected_maps_parallel(maps, songs_path, max_workers=4, preferred_m
         print(f"{C_YELLOW}Đã hủy quá trình tải.{C_RESET}")
         return
 
-    print(f"\n{C_GREEN}{C_BOLD}Bắt đầu tải song song {max_workers} luồng (Mirror ưu tiên: {preferred_mirror})...{C_RESET}\n")
+    print(f"\n{C_GREEN}{C_BOLD}Bắt đầu tải song song {max_workers} luồng (Mirror: {preferred_mirror})...{C_RESET}\n")
 
     start_total_time = time.time()
 
@@ -105,7 +107,7 @@ def download_selected_maps_parallel(maps, songs_path, max_workers=4, preferred_m
 
     print("\n" + "=" * 66)
     print(f"{C_BOLD}{C_GREEN}HOÀN TẤT TẢI BEATMAPS SONG SONG!{C_RESET}")
-    print(f" • Thành công: {C_GREEN}{success} maps{C_RESET} ({total_mb:.1f} MB trong {elapsed_total:.1f}s - Tốc độ TB: {total_mb/elapsed_total:.2f} MB/s)")
+    print(f" • Thành công: {C_GREEN}{success} maps{C_RESET} ({total_mb:.1f} MB trong {elapsed_total:.1f}s - TB: {total_mb/elapsed_total:.2f} MB/s)")
     if fail > 0:
         print(f" • Thất bại: {C_RED}{fail} maps{C_RESET}")
     print(f" • Thư mục: {C_WHITE}{songs_path}{C_RESET}")
@@ -142,16 +144,17 @@ def interactive_menu():
 
     max_threads = cfg.get("concurrent_downloads", 4)
     pref_mirror = cfg.get("preferred_mirror", "auto")
+    scan_depth = 20
 
     while True:
         print_profile_card(prof, songs_path, len(installed_ids))
-        print(f"{C_BOLD}CHỌN CHỨC NĂNG TẢI MAP:{C_RESET}")
-        print(f" {C_GREEN}[1]{C_RESET} {C_BOLD}Tải Farm Maps nhiều người chơi nhất ({nm_rec['min_sr']}* – {nm_rec['max_sr']}* Nomod/HD) [KHUYÊN DÙNG]{C_RESET}")
-        print(f" {C_CYAN}[2]{C_RESET} Tải Gói DT Farm ({dt_rec['min_sr']}* – {dt_rec['max_sr']}* base -> Jump/Speed)")
-        print(f" {C_MAGENTA}[3]{C_RESET} Tải Gói HR Farm ({hr_rec['min_sr']}* – {hr_rec['max_sr']}* base -> Precision/Flow)")
-        print(f" {C_YELLOW}[4]{C_RESET} Tải theo Mapper tủ (Sotarks, Reform, Seni, Kowari, Nevo, browiec...)")
-        print(f" {C_WHITE}[5]{C_RESET} Tự nhập khoảng Star Rating & Bộ lọc trạng thái map (Ranked/Loved/Qualified)")
-        print(f" {C_BLUE}[6]{C_RESET} Cài đặt (Số luồng tải song song: {max_threads} | Mirror: {pref_mirror})")
+        print(f"{C_BOLD}CHỌN CHỨC NĂNG TẢI MAP (KHÔNG GIỚI HẠN MAPPER/ARTIST):{C_RESET}")
+        print(f" {C_GREEN}[1]{C_RESET} {C_BOLD}Quét Mở Toàn Bộ Kho Map ({nm_rec['min_sr']}* – {nm_rec['max_sr']}* Nomod/HD) [KHUYÊN DÙNG]{C_RESET}")
+        print(f" {C_CYAN}[2]{C_RESET} Quét Mở Kho Map DT Farm ({dt_rec['min_sr']}* – {dt_rec['max_sr']}* base -> Speed/Jump)")
+        print(f" {C_MAGENTA}[3]{C_RESET} Quét Mở Kho Map HR Farm ({hr_rec['min_sr']}* – {hr_rec['max_sr']}* base -> Precision/Flow)")
+        print(f" {C_YELLOW}[4]{C_RESET} Tìm kiếm theo từ khóa tự do (anime, j-pop, tên bài, thể loại...)")
+        print(f" {C_WHITE}[5]{C_RESET} Tùy chọn khoảng Star Rating, Tình trạng map & Tiêu chí sắp xếp")
+        print(f" {C_BLUE}[6]{C_RESET} Cài đặt nâng cao (Luồng tải: {max_threads} | Quét sâu: {scan_depth} trang | Mirror: {pref_mirror})")
         print(f" {C_WHITE}[7]{C_RESET} Mở giao diện đồ họa Desktop GUI")
         print(f" {C_RED}[0]{C_RESET} Thoát")
 
@@ -167,74 +170,77 @@ def interactive_menu():
             break
 
         elif choice == "1":
-            amount_str = input(f"Nhập số lượng map muốn tải (mặc định 25): ").strip()
-            amount = int(amount_str) if amount_str.isdigit() else 25
-            print(f"\n{C_CYAN}Đang tìm kiếm các map Ranked phổ biến nhất trong khoảng {nm_rec['min_sr']}* – {nm_rec['max_sr']}*...{C_RESET}")
+            amount_str = input(f"Nhập số lượng map muốn tải (mặc định 30): ").strip()
+            amount = int(amount_str) if amount_str.isdigit() else 30
+            print(f"\n{C_CYAN}Đang quét mở toàn diện kho beatmap trong khoảng {nm_rec['min_sr']}* – {nm_rec['max_sr']}*...{C_RESET}")
             maps = map_finder.find_ranked_farm_maps(
                 min_sr=nm_rec["min_sr"],
                 max_sr=nm_rec["max_sr"],
                 limit=amount,
                 status_filter="ranked",
+                sort_by="farm_score",
+                scan_depth=scan_depth,
                 already_installed_ids=installed_ids,
                 progress_callback=lambda c, t, msg: sys.stdout.write(f"\r{msg} ({c}/{t})")
             )
             print()
-            download_selected_maps_parallel(maps, songs_path, max_workers=max_threads, preferred_mirror=pref_mirror, no_video=cfg.get("no_video", True))
+            download_selected_maps_parallel(maps, songs_path, max_workers=max_threads, preferred_mirror=pref_mirror, no_video=True)
             installed_ids = config.get_installed_beatmap_ids(songs_path)
 
         elif choice == "2":
-            amount_str = input(f"Nhập số lượng map muốn tải (mặc định 20): ").strip()
-            amount = int(amount_str) if amount_str.isdigit() else 20
-            print(f"\n{C_CYAN}Đang tìm kiếm các map DT Farm trong khoảng {dt_rec['min_sr']}* – {dt_rec['max_sr']}*...{C_RESET}")
+            amount_str = input(f"Nhập số lượng map muốn tải (mặc định 25): ").strip()
+            amount = int(amount_str) if amount_str.isdigit() else 25
+            print(f"\n{C_CYAN}Đang quét mở toàn diện kho map DT trong khoảng {dt_rec['min_sr']}* – {dt_rec['max_sr']}*...{C_RESET}")
             maps = map_finder.find_ranked_farm_maps(
                 min_sr=dt_rec["min_sr"],
                 max_sr=dt_rec["max_sr"],
                 limit=amount,
                 mod="DT",
                 status_filter="ranked",
+                sort_by="farm_score",
+                scan_depth=scan_depth,
                 already_installed_ids=installed_ids,
                 progress_callback=lambda c, t, msg: sys.stdout.write(f"\r{msg} ({c}/{t})")
             )
             print()
-            download_selected_maps_parallel(maps, songs_path, max_workers=max_threads, preferred_mirror=pref_mirror, no_video=cfg.get("no_video", True))
+            download_selected_maps_parallel(maps, songs_path, max_workers=max_threads, preferred_mirror=pref_mirror, no_video=True)
             installed_ids = config.get_installed_beatmap_ids(songs_path)
 
         elif choice == "3":
-            amount_str = input(f"Nhập số lượng map muốn tải (mặc định 20): ").strip()
-            amount = int(amount_str) if amount_str.isdigit() else 20
-            print(f"\n{C_CYAN}Đang tìm kiếm các map HR Farm trong khoảng {hr_rec['min_sr']}* – {hr_rec['max_sr']}*...{C_RESET}")
+            amount_str = input(f"Nhập số lượng map muốn tải (mặc định 25): ").strip()
+            amount = int(amount_str) if amount_str.isdigit() else 25
+            print(f"\n{C_CYAN}Đang quét mở toàn diện kho map HR trong khoảng {hr_rec['min_sr']}* – {hr_rec['max_sr']}*...{C_RESET}")
             maps = map_finder.find_ranked_farm_maps(
                 min_sr=hr_rec["min_sr"],
                 max_sr=hr_rec["max_sr"],
                 limit=amount,
                 mod="HR",
                 status_filter="ranked",
+                sort_by="farm_score",
+                scan_depth=scan_depth,
                 already_installed_ids=installed_ids,
                 progress_callback=lambda c, t, msg: sys.stdout.write(f"\r{msg} ({c}/{t})")
             )
             print()
-            download_selected_maps_parallel(maps, songs_path, max_workers=max_threads, preferred_mirror=pref_mirror, no_video=cfg.get("no_video", True))
+            download_selected_maps_parallel(maps, songs_path, max_workers=max_threads, preferred_mirror=pref_mirror, no_video=True)
             installed_ids = config.get_installed_beatmap_ids(songs_path)
 
         elif choice == "4":
-            print(f"\nCác mappers nổi tiếng: {', '.join(map_finder.FARM_MAPPERS[:12])}")
-            mapper = input("Nhập tên Mapper bạn muốn tải (ví dụ: Sotarks): ").strip()
-            if not mapper:
-                continue
-            amount_str = input("Số lượng map muốn tải (mặc định 15): ").strip()
-            amount = int(amount_str) if amount_str.isdigit() else 15
-            print(f"\n{C_CYAN}Đang tìm kiếm map ranked của {mapper}...{C_RESET}")
+            kw = input("Nhập từ khóa tìm kiếm tự do (anime, j-pop, tên bài...): ").strip()
+            amount_str = input("Số lượng map muốn tải (mặc định 20): ").strip()
+            amount = int(amount_str) if amount_str.isdigit() else 20
+            print(f"\n{C_CYAN}Đang tìm kiếm map theo từ khóa '{kw}'...{C_RESET}")
             maps = map_finder.find_ranked_farm_maps(
-                min_sr=nm_rec["min_sr"] - 0.2,
-                max_sr=nm_rec["max_sr"] + 0.3,
+                min_sr=nm_rec["min_sr"] - 0.5,
+                max_sr=nm_rec["max_sr"] + 0.5,
                 limit=amount,
-                status_filter="ranked",
+                keyword=kw,
+                scan_depth=scan_depth,
                 already_installed_ids=installed_ids,
-                mapper_filter=mapper,
                 progress_callback=lambda c, t, msg: sys.stdout.write(f"\r{msg} ({c}/{t})")
             )
             print()
-            download_selected_maps_parallel(maps, songs_path, max_workers=max_threads, preferred_mirror=pref_mirror, no_video=cfg.get("no_video", True))
+            download_selected_maps_parallel(maps, songs_path, max_workers=max_threads, preferred_mirror=pref_mirror, no_video=True)
             installed_ids = config.get_installed_beatmap_ids(songs_path)
 
         elif choice == "5":
@@ -251,23 +257,34 @@ def interactive_menu():
                 st_map = {"1": "ranked", "2": "leaderboard", "3": "loved", "4": "qualified", "5": "all"}
                 st_filter = st_map.get(st_c, "ranked")
 
-                amount_str = input("Số lượng map muốn tải (mặc định 20): ").strip()
-                amount = int(amount_str) if amount_str.isdigit() else 20
+                print("\nChọn tiêu chí sắp xếp:")
+                print(" 1. Dễ farm & Thoải mái nhất (Smart Farm Score)")
+                print(" 2. Nhiều người chơi nhất (Playcount)")
+                print(" 3. Được yêu thích nhất (Favourites)")
+                print(" 4. Mới nhất (Newest Ranked)")
+                so_c = input("Chọn sắp xếp (1-4, mặc định 1): ").strip()
+                so_map = {"1": "farm_score", "2": "plays", "3": "favs", "4": "newest"}
+                sort_choice = so_map.get(so_c, "farm_score")
+
+                amount_str = input("Số lượng map muốn tải (mặc định 25): ").strip()
+                amount = int(amount_str) if amount_str.isdigit() else 25
             except ValueError:
                 print(f"{C_RED}Giá trị nhập không hợp lệ.{C_RESET}")
                 continue
 
-            print(f"\n{C_CYAN}Đang tìm kiếm các map trong khoảng {min_sr}* – {max_sr}* ({st_filter})...{C_RESET}")
+            print(f"\n{C_CYAN}Đang quét các map trong khoảng {min_sr}* – {max_sr}*...{C_RESET}")
             maps = map_finder.find_ranked_farm_maps(
                 min_sr=min_sr,
                 max_sr=max_sr,
                 limit=amount,
                 status_filter=st_filter,
+                sort_by=sort_choice,
+                scan_depth=scan_depth,
                 already_installed_ids=installed_ids,
                 progress_callback=lambda c, t, msg: sys.stdout.write(f"\r{msg} ({c}/{t})")
             )
             print()
-            download_selected_maps_parallel(maps, songs_path, max_workers=max_threads, preferred_mirror=pref_mirror, no_video=cfg.get("no_video", True))
+            download_selected_maps_parallel(maps, songs_path, max_workers=max_threads, preferred_mirror=pref_mirror, no_video=True)
             installed_ids = config.get_installed_beatmap_ids(songs_path)
 
         elif choice == "6":
@@ -277,14 +294,9 @@ def interactive_menu():
                 max_threads = int(new_threads)
                 cfg["concurrent_downloads"] = max_threads
 
-            print("\nChọn Mirror ưu tiên:")
-            mirrors = list(mirror_downloader.MIRROR_PROVIDERS.keys())
-            for i, k in enumerate(mirrors, 1):
-                print(f" {i}. {mirror_downloader.MIRROR_PROVIDERS[k]}")
-            m_c = input(f"Chọn mirror (1-{len(mirrors)}, hiện tại: {pref_mirror}): ").strip()
-            if m_c.isdigit() and 1 <= int(m_c) <= len(mirrors):
-                pref_mirror = mirrors[int(m_c) - 1]
-                cfg["preferred_mirror"] = pref_mirror
+            new_depth = input(f"Nhập độ sâu quét danh mục (10-50 trang, hiện tại: {scan_depth}): ").strip()
+            if new_depth.isdigit() and 5 <= int(new_depth) <= 50:
+                scan_depth = int(new_depth)
 
             config.save_config(cfg)
             print(f"{C_GREEN}Đã lưu cài đặt!{C_RESET}")
@@ -295,11 +307,13 @@ def main():
     parser.add_argument("--profile", type=str, default="Cao Mi Le", help="Tên profile osu! (mặc định: Cao Mi Le)")
     parser.add_argument("--min-sr", type=float, default=None, help="Star Rating tối thiểu")
     parser.add_argument("--max-sr", type=float, default=None, help="Star Rating tối đa")
-    parser.add_argument("--count", "-n", type=int, default=25, help="Số lượng mapset cần tải")
+    parser.add_argument("--count", "-n", type=int, default=30, help="Số lượng mapset cần tải")
+    parser.add_argument("--query", "-q", type=str, default="", help="Từ khóa tìm kiếm tự do (để trống = quét mở toàn bộ kho map)")
     parser.add_argument("--status", type=str, default="ranked", choices=["ranked", "leaderboard", "ranked_approved", "loved", "qualified", "all"], help="Lọc theo tình trạng map")
+    parser.add_argument("--sort", type=str, default="farm_score", choices=["farm_score", "plays", "favs", "newest", "sr_asc", "sr_desc"], help="Tiêu chí sắp xếp")
+    parser.add_argument("--depth", type=int, default=20, help="Độ sâu quét danh mục (số trang, mỗi trang 100 maps)")
     parser.add_argument("--mirror", type=str, default="auto", choices=["auto", "osu.direct", "catboy", "sayobot", "beatconnect", "nerinyan"], help="Nguồn mirror ưu tiên")
     parser.add_argument("--threads", "-t", type=int, default=4, help="Số luồng tải song song (mặc định 4)")
-    parser.add_argument("--mapper", type=str, default=None, help="Lọc theo mapper cụ thể")
     parser.add_argument("--dt", action="store_true", help="Chế độ tải gói DT Farm")
     parser.add_argument("--hr", action="store_true", help="Chế độ tải gói HR Farm")
     parser.add_argument("--songs-path", type=str, default=None, help="Đường dẫn thư mục Songs của osu!")
@@ -343,15 +357,17 @@ def main():
         min_sr = min_sr or prof["recommended"]["nomod_hd"]["min_sr"]
         max_sr = max_sr or prof["recommended"]["nomod_hd"]["max_sr"]
 
-    print(f"{C_CYAN}Đang tìm kiếm {args.count} maps ({min_sr}* – {max_sr}* | Trạng thái: {args.status})...{C_RESET}")
+    print(f"{C_CYAN}Đang quét kho map mở ({min_sr}* – {max_sr}* | Trạng thái: {args.status} | Sắp xếp: {args.sort})...{C_RESET}")
     maps = map_finder.find_ranked_farm_maps(
         min_sr=min_sr,
         max_sr=max_sr,
         limit=args.count,
         mod=mod,
         status_filter=args.status,
+        sort_by=args.sort,
+        keyword=args.query,
+        scan_depth=args.depth,
         already_installed_ids=installed,
-        mapper_filter=args.mapper,
         progress_callback=lambda c, t, msg: sys.stdout.write(f"\r{msg} ({c}/{t})")
     )
     print()

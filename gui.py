@@ -3,9 +3,8 @@
 
 """
 osu! Farm Map Downloader - Modern Linux GUI (PySide6)
-Phiên bản 1.1.0: Tải song song đa luồng, Bộ lọc trạng thái map, Tùy chọn nguồn Mirror, Nghe thử Audio Preview
-Dành riêng cho Linux & osu! stable trên ổ cứng ngoài
-Người chơi: Cao Mi Le (Rank #12k, 9.1k PP)
+Phiên bản 1.2.0: Quét toàn diện kho Beatmap mở (Open Catalog Traversal),
+Loại bỏ gò bó theo mapper/artist, Lọc thông minh theo Pass Rate, CS, AR, và Đa luồng song song.
 """
 
 import os
@@ -17,7 +16,6 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Qt, QThread, Signal, QUrl
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
-# Import core modules
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
@@ -88,12 +86,10 @@ QPushButton#PrimaryBtn {
     font-size: 14px;
     padding: 10px 20px;
     border-radius: 6px;
+    font-weight: bold;
 }
 QPushButton#PrimaryBtn:hover {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff7ab5, stop:1 #be7aff);
-}
-QPushButton#PrimaryBtn:pressed {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #e65595, stop:1 #9f52e6);
 }
 QPushButton#SecondaryBtn {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2ecc71, stop:1 #27ae60);
@@ -169,14 +165,16 @@ class SearchWorker(QThread):
     finished_signal = Signal(list)
     error_signal = Signal(str)
 
-    def __init__(self, min_sr, max_sr, limit, mod, status_filter, mapper_filter, installed_ids):
+    def __init__(self, min_sr, max_sr, limit, mod, status_filter, sort_by, keyword, scan_depth, installed_ids):
         super().__init__()
         self.min_sr = min_sr
         self.max_sr = max_sr
         self.limit = limit
         self.mod = mod
         self.status_filter = status_filter
-        self.mapper_filter = mapper_filter
+        self.sort_by = sort_by
+        self.keyword = keyword
+        self.scan_depth = scan_depth
         self.installed_ids = installed_ids
 
     def run(self):
@@ -187,8 +185,10 @@ class SearchWorker(QThread):
                 limit=self.limit,
                 mod=self.mod,
                 status_filter=self.status_filter,
+                sort_by=self.sort_by,
+                keyword=self.keyword,
+                scan_depth=self.scan_depth,
                 already_installed_ids=self.installed_ids,
-                mapper_filter=self.mapper_filter if self.mapper_filter != "Tất cả Mappers" else None,
                 progress_callback=lambda c, t, msg: self.progress_signal.emit(c, t, msg)
             )
             self.finished_signal.emit(maps)
@@ -196,13 +196,12 @@ class SearchWorker(QThread):
             self.error_signal.emit(str(e))
 
 class ParallelDownloadWorker(QThread):
-    row_progress_signal = Signal(int, str, int)  # row_index, status_text, percent
-    overall_progress_signal = Signal(int, int, float, float)  # completed, total, total_mb, speed_mb
-    all_finished_signal = Signal(int, int, float, float)      # success, fail, total_mb, elapsed
+    row_progress_signal = Signal(int, str, int)
+    overall_progress_signal = Signal(int, int, float, float)
+    all_finished_signal = Signal(int, int, float, float)
 
     def __init__(self, selected_items, songs_path, max_workers=4, preferred_mirror="auto", no_video=True):
         super().__init__()
-        # selected_items là danh sách tuple (row_index, map_dict)
         self.selected_items = selected_items
         self.songs_path = songs_path
         self.max_workers = max_workers
@@ -279,8 +278,8 @@ class ParallelDownloadWorker(QThread):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("osu! Ranked Farm Maps Downloader (Linux & External Drive) v1.1.0")
-        self.resize(1180, 800)
+        self.setWindowTitle("osu! Ranked Farm Maps Downloader (Linux & External Drive) v1.2.0")
+        self.resize(1200, 820)
         self.setStyleSheet(DARK_STYLE)
 
         self.cfg = config.load_config()
@@ -336,7 +335,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Audio Player Controls in Header
         audio_box = QtWidgets.QHBoxLayout()
-        self.lbl_now_playing = QtWidgets.QLabel("🎵 Chưa phát audio")
+        self.lbl_now_playing = QtWidgets.QLabel("🎵 Nhấp đúp vào bài để nghe thử")
         self.lbl_now_playing.setStyleSheet("color: #b3a6d4; font-size: 12px; margin-right: 8px;")
         self.btn_stop_audio = QtWidgets.QPushButton("⏹ Dừng")
         self.btn_stop_audio.setObjectName("AudioBtn")
@@ -365,14 +364,14 @@ class MainWindow(QtWidgets.QMainWindow):
         drive_layout.addWidget(self.lbl_installed, 2)
         main_layout.addWidget(drive_box)
 
-        # 3. Enhanced Filter Controls Panel
-        filter_box = QtWidgets.QGroupBox("🔍 Bộ lọc Beatmaps Thông Minh (Smart Farm Filter & Status)")
+        # 3. Open Discovery Filter Controls Panel
+        filter_box = QtWidgets.QGroupBox("🔍 Khám phá Toàn bộ Kho Beatmap Mở (Open Catalog Discovery)")
         filter_layout = QtWidgets.QGridLayout(filter_box)
         filter_layout.setContentsMargins(12, 14, 12, 12)
         filter_layout.setHorizontalSpacing(14)
         filter_layout.setVerticalSpacing(8)
 
-        # Row 0: Chế độ & Star Rating
+        # Row 0: Chế độ chơi & Star Rating
         filter_layout.addWidget(QtWidgets.QLabel("Chế độ chơi:"), 0, 0)
         self.mode_combo = QtWidgets.QComboBox()
         self.mode_combo.addItems(["⚡ Nomod / Hidden Farm", "⏩ DoubleTime (DT) Farm", "🎯 HardRock (HR) Farm"])
@@ -393,13 +392,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.spin_max_sr.setValue(nm["max_sr"])
         filter_layout.addWidget(self.spin_max_sr, 0, 5)
 
-        # Search Button (Spans 2 rows)
-        self.btn_search = QtWidgets.QPushButton("🔍 Tìm Kiếm Map Farm Phù Hợp")
+        # Search Button (Spans 3 rows)
+        self.btn_search = QtWidgets.QPushButton("🚀 QUÉT KHO MAP TOÀN DIỆN")
         self.btn_search.setObjectName("PrimaryBtn")
         self.btn_search.clicked.connect(self.start_search)
-        filter_layout.addWidget(self.btn_search, 0, 6, 2, 1)
+        filter_layout.addWidget(self.btn_search, 0, 6, 3, 1)
 
-        # Row 1: Tình trạng map, Mapper, Số lượng
+        # Row 1: Tình trạng map & Tiêu chí sắp xếp & Số lượng
         filter_layout.addWidget(QtWidgets.QLabel("Tình trạng map:"), 1, 0)
         self.status_combo = QtWidgets.QComboBox()
         self.status_keys = list(map_finder.STATUS_PRESETS.keys())
@@ -407,35 +406,37 @@ class MainWindow(QtWidgets.QMainWindow):
             self.status_combo.addItem(map_finder.STATUS_PRESETS[k]["name"])
         filter_layout.addWidget(self.status_combo, 1, 1)
 
-        filter_layout.addWidget(QtWidgets.QLabel("Mapper tủ:"), 1, 2)
-        self.mapper_combo = QtWidgets.QComboBox()
-        self.mapper_combo.addItem("Tất cả Mappers")
-        self.mapper_combo.addItems(map_finder.FARM_MAPPERS)
-        filter_layout.addWidget(self.mapper_combo, 1, 3)
+        filter_layout.addWidget(QtWidgets.QLabel("Sắp xếp theo:"), 1, 2)
+        self.sort_combo = QtWidgets.QComboBox()
+        self.sort_keys = list(map_finder.SORT_OPTIONS.keys())
+        for k in self.sort_keys:
+            self.sort_combo.addItem(map_finder.SORT_OPTIONS[k])
+        filter_layout.addWidget(self.sort_combo, 1, 3)
 
         filter_layout.addWidget(QtWidgets.QLabel("Số lượng map:"), 1, 4)
         self.spin_limit = QtWidgets.QSpinBox()
-        self.spin_limit.setRange(5, 100)
+        self.spin_limit.setRange(5, 200)
         self.spin_limit.setValue(30)
         filter_layout.addWidget(self.spin_limit, 1, 5)
 
-        # Row 2: Nguồn Mirror & Tải song song (Đa luồng)
-        filter_layout.addWidget(QtWidgets.QLabel("Nguồn Mirror:"), 2, 0)
-        self.mirror_combo = QtWidgets.QComboBox()
-        self.mirror_keys = list(mirror_downloader.MIRROR_PROVIDERS.keys())
-        for k in self.mirror_keys:
-            self.mirror_combo.addItem(mirror_downloader.MIRROR_PROVIDERS[k])
-        filter_layout.addWidget(self.mirror_combo, 2, 1)
+        # Row 2: Từ khóa tìm kiếm tự do, Độ sâu quét, Mirror & Tải song song
+        filter_layout.addWidget(QtWidgets.QLabel("Từ khóa (tự do):"), 2, 0)
+        self.keyword_edit = QtWidgets.QLineEdit()
+        self.keyword_edit.setPlaceholderText("Để trống = Quét TẤT CẢ kho map | hoặc gõ anime, j-pop, tên bài...")
+        filter_layout.addWidget(self.keyword_edit, 2, 1)
 
-        filter_layout.addWidget(QtWidgets.QLabel("Tải song song (Luồng):"), 2, 2)
+        filter_layout.addWidget(QtWidgets.QLabel("Quét sâu (trang):"), 2, 2)
+        self.spin_depth = QtWidgets.QSpinBox()
+        self.spin_depth.setRange(5, 50)
+        self.spin_depth.setValue(20)
+        self.spin_depth.setToolTip("Quét qua bao nhiêu trang (mỗi trang 100 maps). Giá trị càng cao càng tìm được nhiều map mới.")
+        filter_layout.addWidget(self.spin_depth, 2, 3)
+
+        filter_layout.addWidget(QtWidgets.QLabel("Tải song song (luồng):"), 2, 4)
         self.spin_threads = QtWidgets.QSpinBox()
         self.spin_threads.setRange(1, 8)
         self.spin_threads.setValue(self.cfg.get("concurrent_downloads", 4))
-        filter_layout.addWidget(self.spin_threads, 2, 3)
-
-        self.chk_no_video = QtWidgets.QCheckBox("No-Video (Tải siêu nhanh & tiết kiệm ổ cứng)")
-        self.chk_no_video.setChecked(self.cfg.get("no_video", True))
-        filter_layout.addWidget(self.chk_no_video, 2, 4, 1, 2)
+        filter_layout.addWidget(self.spin_threads, 2, 5)
 
         main_layout.addWidget(filter_box)
 
@@ -453,7 +454,6 @@ class MainWindow(QtWidgets.QMainWindow):
         table_header_layout.addWidget(btn_deselect_all)
         main_layout.addLayout(table_header_layout)
 
-        # Table with 8 columns: [Chọn, Set ID, Tên bài, Mapper, Diffs, Farm Score, Trạng thái tải, Tags]
         self.table = QtWidgets.QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels([
             "Chọn", "ID", "Tên Bài Hát & Nghệ Sĩ", "Mapper", "Star Rating (Diffs)", "Farm Score", "Trạng thái", "Đặc điểm / Tags"
@@ -474,7 +474,7 @@ class MainWindow(QtWidgets.QMainWindow):
         pbar_layout = QtWidgets.QHBoxLayout()
         self.progress_bar = QtWidgets.QProgressBar()
         self.progress_bar.setValue(0)
-        self.lbl_speed = QtWidgets.QLabel("Sẵn sàng tải")
+        self.lbl_speed = QtWidgets.QLabel("Sẵn sàng quét và tải")
         self.lbl_speed.setStyleSheet("color: #ff66aa; font-weight: bold; min-width: 220px;")
 
         pbar_layout.addWidget(self.progress_bar, 4)
@@ -534,14 +534,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_search.setEnabled(False)
         self.btn_download.setEnabled(False)
         self.progress_bar.setValue(0)
-        self.lbl_speed.setText("Đang tìm kiếm map...")
-        self.lbl_status.setText("Đang kết nối mirror và tính toán farm score...")
+        self.lbl_speed.setText("Đang quét kho beatmap...")
+        self.lbl_status.setText("Đang duyệt song song qua các trang danh mục osu!...")
 
         min_sr = self.spin_min_sr.value()
         max_sr = self.spin_max_sr.value()
         limit = self.spin_limit.value()
-        mapper = self.mapper_combo.currentText()
         status_key = self.status_keys[self.status_combo.currentIndex()]
+        sort_key = self.sort_keys[self.sort_combo.currentIndex()]
+        keyword = self.keyword_edit.text().strip()
+        scan_depth = self.spin_depth.value()
 
         mod = "NM"
         if self.mode_combo.currentIndex() == 1:
@@ -552,7 +554,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.installed_ids = config.get_installed_beatmap_ids(songs_dir)
         self.lbl_installed.setText(f"📦 Đã có: <b>{len(self.installed_ids):,} maps</b> (Tự động bỏ qua)")
 
-        self.search_worker = SearchWorker(min_sr, max_sr, limit, mod, status_key, mapper, self.installed_ids)
+        self.search_worker = SearchWorker(
+            min_sr=min_sr,
+            max_sr=max_sr,
+            limit=limit,
+            mod=mod,
+            status_filter=status_key,
+            sort_by=sort_key,
+            keyword=keyword,
+            scan_depth=scan_depth,
+            installed_ids=self.installed_ids
+        )
         self.search_worker.progress_signal.connect(self.on_search_progress)
         self.search_worker.finished_signal.connect(self.on_search_finished)
         self.search_worker.error_signal.connect(self.on_search_error)
@@ -568,14 +580,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.current_maps = maps
         self.progress_bar.setValue(100)
         self.lbl_speed.setText(f"Tìm thấy {len(maps)} maps!")
-        self.lbl_status.setText(f"Đã hoàn thành tìm kiếm. Hãy chọn các map bạn muốn tải.")
+        self.lbl_status.setText(f"Đã hoàn thành quét. Hãy chọn các map bạn muốn tải.")
         self.populate_table(maps)
 
         if maps:
             self.btn_download.setEnabled(True)
         else:
             QtWidgets.QMessageBox.information(
-                self, "Thông báo", "Không tìm thấy map mới nào thỏa mãn khoảng SR hoặc các map đều đã có sẵn trong ổ cứng!"
+                self, "Thông báo", "Không tìm thấy map mới nào thỏa mãn khoảng SR hoặc các map đều đã có sẵn trong ổ cứng! Bạn hãy thử tăng 'Quét sâu (trang)' hoặc mở rộng khoảng Star Rating."
             )
 
     def on_search_error(self, err_msg):
@@ -674,7 +686,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def stop_audio(self):
         self.media_player.stop()
-        self.lbl_now_playing.setText("🎵 Chưa phát audio")
+        self.lbl_now_playing.setText("🎵 Nhấp đúp vào bài để nghe thử")
         self.lbl_now_playing.setStyleSheet("color: #b3a6d4; font-size: 12px; margin-right: 8px;")
         self.btn_stop_audio.setEnabled(False)
 
@@ -701,17 +713,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar.setValue(0)
 
         max_workers = self.spin_threads.value()
-        pref_mirror = self.mirror_keys[self.mirror_combo.currentIndex()]
-        no_video = self.chk_no_video.isChecked()
+        pref_mirror = self.cfg.get("preferred_mirror", "auto")
 
-        self.lbl_speed.setText(f"Khởi động {max_workers} luồng...")
+        self.lbl_speed.setText(f"Khởi động {max_workers} luồng tải song song...")
 
         self.download_worker = ParallelDownloadWorker(
             selected_items,
             songs_dir,
             max_workers=max_workers,
             preferred_mirror=pref_mirror,
-            no_video=no_video
+            no_video=True
         )
         self.download_worker.row_progress_signal.connect(self.on_row_progress)
         self.download_worker.overall_progress_signal.connect(self.on_overall_progress)

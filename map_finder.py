@@ -1,18 +1,7 @@
 import urllib.request
 import urllib.parse
 import json
-import re
-
-FARM_MAPPERS = [
-    "Sotarks", "Nevo", "Reform", "browiec", "Seni", "Kowari",
-    "Akitoshi", "Log Off Now", "fieryrage", "SMOKELIND", "Monstrata",
-    "Taeyang", "Armin", "Doormat", "SnowNiNo_", "Chanci", "Mirash",
-    "Lami", "Awaken", "SkyFlame", "Lasse", "Djulus", "Len", "Kroytz"
-]
-
-AIM_JUMP_MAPPERS = {"Sotarks", "Reform", "browiec", "Nevo", "Kowari", "fieryrage", "Akitoshi", "Monstrata", "Taeyang", "Armin", "Doormat"}
-FLOW_SPEED_MAPPERS = {"Seni", "SMOKELIND", "Log Off Now", "Chanci", "Mirash", "SkyFlame"}
-STREAM_MAPPERS = {"Lasse", "Awaken", "Lami", "Djulus", "Kroytz"}
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 STATUS_PRESETS = {
     "ranked": {"name": "Ranked (Chính thức, có PP)", "values": [1], "api_status": 1},
@@ -23,8 +12,17 @@ STATUS_PRESETS = {
     "all": {"name": "Tất cả trạng thái (Bao gồm Pending/Graveyard)", "values": None, "api_status": None}
 }
 
+SORT_OPTIONS = {
+    "farm_score": "🏆 Dễ farm & Thoải mái nhất (Smart Farm Score)",
+    "plays": "🔥 Nhiều người chơi nhất (Playcount)",
+    "favs": "❤️ Được yêu thích nhất (Favourites)",
+    "newest": "🆕 Mới nhất (Newest Ranked)",
+    "sr_asc": "⭐ Star Rating tăng dần",
+    "sr_desc": "⭐ Star Rating giảm dần"
+}
+
 def calculate_dt_ar(ar):
-    """Tính AR sau khi bật mod DoubleTime (DT/NC)"""
+    """Tính AR chính xác sau khi bật mod DoubleTime (DT/NC) theo chuẩn osu!"""
     if ar <= 5:
         ms = 1800 - 120 * ar
     else:
@@ -35,14 +33,16 @@ def calculate_dt_ar(ar):
     else:
         return round(5 + (1200 - ms_dt) / 150, 2)
 
-def calculate_smart_farm_score(diff, set_info, mod="NM"):
+def calculate_objective_farm_score(diff, set_info):
     """
-    Thuật toán chấm điểm Farm & Độ thoải mái (Comfort Score: 0 - 100):
-    - Đánh giá Pass Rate: Map có tỷ lệ pass cao chứng tỏ pattern mượt, ít choke.
-    - Đánh giá CS: CS 3.8 - 4.3 là tỉ lệ vàng của jump farm. CS > 4.6 bị trừ điểm.
-    - Đánh giá AR: AR 9.3 - 9.8 phù hợp cao với người chơi rank 12k.
-    - Đánh giá độ dài: TV Size (70s - 150s) được cộng điểm tối đa vì dễ cày và retries nhanh.
-    - Đánh giá Mapper: Các mappers nổi danh về farm jump/flow aim được gắn tag và ưu tiên.
+    Thuật toán chấm điểm Farm & Độ thoải mái (Comfort Score: 0 - 100)
+    hoàn toàn dựa trên CHỈ SỐ KỸ THUẬT VÀ DỮ LIỆU THỰC TẾ của map (không phụ thuộc vào tên Mapper hay Artist):
+
+    1. Tỷ lệ Pass Rate (Passcount / Playcount): Phản ánh độ mượt của pattern, không có diff spike/choke cuối.
+    2. Circle Size (CS): CS 3.8 - 4.3 là tỉ lệ vàng của jump/farm. CS quá nhỏ (> 4.6) sẽ bị trừ điểm nặng.
+    3. Approach Rate (AR): AR 9.3 - 9.8 tối ưu cho phản xạ đọc note.
+    4. Độ dài bài (Hit Length): Ưu tiên TV Size / Cut Ver (60s - 140s) giúp retry nhanh, ít tốn thể lực.
+    5. Mức độ phổ biến: Lượt plays & favourites từ hàng ngàn người chơi kiểm chứng.
     """
     cs = diff.get("CS", 4.0)
     ar = diff.get("AR", 9.0)
@@ -50,14 +50,13 @@ def calculate_smart_farm_score(diff, set_info, mod="NM"):
     playcount = diff.get("Playcount", 0)
     passcount = diff.get("Passcount", 0)
     favs = set_info.get("Favourites", 0)
-    creator = set_info.get("Creator", "")
     sr = diff.get("DifficultyRating", 0)
     ranked_status = set_info.get("RankedStatus", 1)
 
-    score = 60.0
+    score = 50.0
     tags = []
 
-    # Gắn badge trạng thái
+    # Tag trạng thái
     if ranked_status == 1:
         tags.append("Ranked")
     elif ranked_status == 4:
@@ -67,66 +66,64 @@ def calculate_smart_farm_score(diff, set_info, mod="NM"):
     elif ranked_status == 3:
         tags.append("Qualified")
 
-    # 1. Tỷ lệ Pass Rate (Passcount / Playcount)
+    # 1. Tỷ lệ Pass Rate
     if playcount > 500:
         pass_rate = (passcount / playcount) * 100
         if pass_rate >= 22.0:
-            score += 15
+            score += 20
             tags.append(f"Pass Rate cao ({pass_rate:.1f}%)")
         elif pass_rate >= 14.0:
-            score += 8
+            score += 10
             tags.append(f"Pass Rate ổn ({pass_rate:.1f}%)")
         elif pass_rate < 8.0:
             score -= 15
+            tags.append(f"Dễ choke ({pass_rate:.1f}%)")
 
     # 2. Circle Size (CS)
     if 3.8 <= cs <= 4.2:
-        score += 10
+        score += 15
         tags.append(f"CS đẹp ({cs})")
-    elif cs > 4.5:
-        score -= (cs - 4.5) * 20
+    elif 4.2 < cs <= 4.4:
+        score += 8
+    elif cs > 4.6:
+        score -= (cs - 4.5) * 25
         tags.append(f"CS nhỏ ({cs})")
+    elif cs < 3.5:
+        score -= 10
 
     # 3. Approach Rate (AR)
     if 9.3 <= ar <= 9.7:
-        score += 10
+        score += 12
+        tags.append(f"AR chuẩn ({ar})")
+    elif 9.0 <= ar < 9.3:
+        score += 5
     elif ar < 9.0 and sr >= 6.5:
         score -= 15
+        tags.append(f"AR thấp ({ar})")
 
-    # 4. Độ dài bài (Length Efficiency)
-    if 65 <= hit_length <= 150:
-        score += 15
-        tags.append("TV Size (Dễ farm)")
-    elif 150 < hit_length <= 240:
-        score += 5
+    # 4. Độ dài bài (Hit Length)
+    if 60 <= hit_length <= 135:
+        score += 18
+        tags.append("TV Size (Cày nhanh)")
+    elif 135 < hit_length <= 220:
+        score += 8
         tags.append("Độ dài chuẩn")
     elif hit_length > 300:
         score -= 15
         tags.append("Marathon dài")
 
-    # 5. Phân loại phong cách Mapper
-    if creator in AIM_JUMP_MAPPERS:
-        score += 10
-        tags.append("Jump Farm")
-    elif creator in FLOW_SPEED_MAPPERS:
+    # 5. Phổ biến & Yêu thích
+    if playcount > 300000 or favs > 800:
+        score += 15
+        tags.append("Rất phổ biến")
+    elif playcount > 80000 or favs > 200:
         score += 8
-        tags.append("Flow Aim")
-    elif creator in STREAM_MAPPERS:
-        score += 5
-        tags.append("Stream/Finger Control")
-
-    # 6. Mức độ phổ biến (Playcount & Favourites)
-    if playcount > 500000 or favs > 1000:
-        score += 10
-        tags.append("Cực kỳ phổ biến")
-    elif playcount > 100000 or favs > 300:
-        score += 5
 
     final_score = max(min(round(score, 1), 100.0), 10.0)
     return final_score, tags
 
-def search_osu_direct(query="", amount=50, offset=0, status=1, mode=0):
-    """Tìm kiếm beatmaps qua osu.direct Cheesegull API"""
+def fetch_search_page(query="", amount=100, offset=0, status=1, mode=0, timeout=7):
+    """Gửi request tìm kiếm 1 trang beatmaps qua Cheesegull (osu.direct API)"""
     params = {
         "amount": amount,
         "offset": offset,
@@ -142,7 +139,7 @@ def search_osu_direct(query="", amount=50, offset=0, status=1, mode=0):
 
     try:
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             if isinstance(data, list):
                 return data
@@ -153,17 +150,18 @@ def search_osu_direct(query="", amount=50, offset=0, status=1, mode=0):
 def find_ranked_farm_maps(
     min_sr=6.5,
     max_sr=7.65,
-    limit=50,
+    limit=30,
     mod="NM",
     status_filter="ranked",
+    sort_by="farm_score",
+    keyword=None,
+    scan_depth=15,
     already_installed_ids=None,
-    mapper_filter=None,
-    keyword_filter=None,
     progress_callback=None
 ):
     """
-    Tìm kiếm và chấm điểm beatmaps thông minh theo thuật toán Farm & Comfort Score.
-    Hỗ trợ lọc theo trạng thái map (Ranked, Loved, Approved, Qualified, All).
+    Khám phá và lọc beatmaps trên TOÀN BỘ kho beatmap osu! mà không giới hạn theo bất kỳ mapper hay artist nào.
+    Sử dụng cơ chế quét sâu nhiều trang đồng thời (Parallel Offset Traversal).
     """
     if already_installed_ids is None:
         already_installed_ids = set()
@@ -173,24 +171,47 @@ def find_ranked_farm_maps(
     api_status = preset["api_status"]
 
     found_sets = {}
+    query_str = keyword.strip() if keyword else ""
 
-    if mapper_filter:
-        mappers_to_scan = [mapper_filter]
-    elif keyword_filter:
-        mappers_to_scan = [keyword_filter]
-    else:
-        mappers_to_scan = FARM_MAPPERS[:15]
+    # Xác định các batch offsets cần quét (mỗi offset 100 maps)
+    # Ví dụ scan_depth = 15 -> quét 15 trang = 1,500 maps
+    max_pages = max(scan_depth, 10)
+    offsets = [i * 100 for i in range(max_pages)]
 
-    total_steps = len(mappers_to_scan) + (2 if not mapper_filter and not keyword_filter else 0)
-    step = 0
+    # Chia offsets thành các đợt (chunks) để quét song song, dừng sớm khi đã đủ số lượng
+    chunk_size = 5
+    offset_chunks = [offsets[i:i + chunk_size] for i in range(0, len(offsets), chunk_size)]
 
-    # 1. Quét theo danh sách mappers / từ khóa
-    for mapper in mappers_to_scan:
-        if len(found_sets) >= limit * 2.5:
+    total_scanned_sets = 0
+
+    for chunk_idx, chunk in enumerate(offset_chunks):
+        if len(found_sets) >= limit * 2:
             break
 
-        results = search_osu_direct(query=mapper, amount=50, status=api_status, mode=0)
-        for s in results:
+        if progress_callback:
+            start_off = chunk[0]
+            end_off = chunk[-1] + 100
+            progress_callback(
+                chunk_idx + 1,
+                len(offset_chunks),
+                f"Đang quét toàn diện map {start_off} – {end_off} (Đã tìm thấy: {len(found_sets)} maps)..."
+            )
+
+        # Quét song song 5 trang cùng lúc
+        with ThreadPoolExecutor(max_workers=min(len(chunk), 5)) as pool:
+            futures = {
+                pool.submit(fetch_search_page, query_str, 100, off, api_status, 0): off
+                for off in chunk
+            }
+            batch_results = []
+            for fut in as_completed(futures):
+                res = fut.result()
+                if res:
+                    batch_results.extend(res)
+
+        total_scanned_sets += len(batch_results)
+
+        for s in batch_results:
             sid = s.get("SetID")
             if not sid or sid in already_installed_ids or sid in found_sets:
                 continue
@@ -226,7 +247,7 @@ def find_ranked_farm_maps(
                     diff_copy["BPM"] = calc_bpm
                     diff_copy["HitLength"] = calc_length
 
-                    score, tags = calculate_smart_farm_score(diff_copy, s, mod=mod)
+                    score, tags = calculate_objective_farm_score(diff_copy, s)
 
                     valid_diffs.append({
                         "id": b.get("BeatmapID"),
@@ -244,14 +265,14 @@ def find_ranked_farm_maps(
                     })
 
             if valid_diffs:
-                total_plays = sum(d["playcount"] for d in valid_diffs)
                 best_diff = max(valid_diffs, key=lambda d: d["farm_score"])
+                total_plays = sum(d["playcount"] for d in valid_diffs)
 
                 found_sets[sid] = {
                     "id": sid,
-                    "title": s.get("Title"),
-                    "artist": s.get("Artist"),
-                    "creator": s.get("Creator"),
+                    "title": s.get("Title", "Unknown"),
+                    "artist": s.get("Artist", "Unknown"),
+                    "creator": s.get("Creator", "Unknown"),
                     "favs": s.get("Favourites", 0),
                     "plays": total_plays,
                     "status_id": r_status,
@@ -262,68 +283,20 @@ def find_ranked_farm_maps(
                     "valid_diffs": sorted(valid_diffs, key=lambda x: x["sr"])
                 }
 
-        step += 1
-        if progress_callback:
-            progress_callback(step, total_steps, f"Đang quét mapper {mapper}...")
+    candidate_list = list(found_sets.values())
 
-    # 2. Quét thêm các map phổ biến chung nếu chưa đủ
-    if len(found_sets) < limit and not mapper_filter and not keyword_filter:
-        for offset in [0, 50, 100]:
-            if len(found_sets) >= limit * 2:
-                break
-            results = search_osu_direct(query="", amount=50, offset=offset, status=api_status, mode=0)
-            for s in results:
-                sid = s.get("SetID")
-                if not sid or sid in already_installed_ids or sid in found_sets:
-                    continue
+    # Sắp xếp theo tùy chọn người dùng
+    if sort_by == "plays":
+        candidate_list.sort(key=lambda x: x["plays"], reverse=True)
+    elif sort_by == "favs":
+        candidate_list.sort(key=lambda x: x["favs"], reverse=True)
+    elif sort_by == "newest":
+        candidate_list.sort(key=lambda x: x["id"], reverse=True)
+    elif sort_by == "sr_asc":
+        candidate_list.sort(key=lambda x: min(d["sr"] for d in x["valid_diffs"]))
+    elif sort_by == "sr_desc":
+        candidate_list.sort(key=lambda x: max(d["sr"] for d in x["valid_diffs"]), reverse=True)
+    else:  # farm_score (mặc định)
+        candidate_list.sort(key=lambda x: (x["farm_score"], x["plays"]), reverse=True)
 
-                r_status = s.get("RankedStatus", 1)
-                if allowed_statuses is not None and r_status not in allowed_statuses:
-                    continue
-
-                valid_diffs = []
-                for b in s.get("ChildrenBeatmaps", []):
-                    if b.get("Mode", 0) != 0:
-                        continue
-                    raw_sr = b.get("DifficultyRating", 0)
-                    effective_sr = raw_sr * 1.38 if mod == "DT" else (raw_sr * 1.08 if mod == "HR" else raw_sr)
-
-                    if min_sr <= effective_sr <= max_sr:
-                        score, tags = calculate_smart_farm_score(b, s, mod=mod)
-                        valid_diffs.append({
-                            "id": b.get("BeatmapID"),
-                            "name": b.get("DiffName"),
-                            "sr": round(effective_sr, 2),
-                            "raw_sr": round(raw_sr, 2),
-                            "cs": b.get("CS"),
-                            "ar": b.get("AR"),
-                            "bpm": b.get("BPM"),
-                            "hit_length": b.get("HitLength"),
-                            "playcount": b.get("Playcount", 0),
-                            "passcount": b.get("Passcount", 0),
-                            "farm_score": score,
-                            "tags": tags
-                        })
-
-                if valid_diffs:
-                    best_diff = max(valid_diffs, key=lambda d: d["farm_score"])
-                    found_sets[sid] = {
-                        "id": sid,
-                        "title": s.get("Title"),
-                        "artist": s.get("Artist"),
-                        "creator": s.get("Creator"),
-                        "favs": s.get("Favourites", 0),
-                        "plays": sum(d["playcount"] for d in valid_diffs),
-                        "status_id": r_status,
-                        "cover_url": f"https://assets.ppy.sh/beatmaps/{sid}/covers/card.jpg",
-                        "preview_audio": f"https://b.ppy.sh/preview/{sid}.mp3",
-                        "farm_score": best_diff["farm_score"],
-                        "best_tags": best_diff["tags"],
-                        "valid_diffs": sorted(valid_diffs, key=lambda x: x["sr"])
-                    }
-            step += 1
-            if progress_callback:
-                progress_callback(step, total_steps, "Đang quét danh sách bài phổ biến...")
-
-    sorted_maps = sorted(found_sets.values(), key=lambda x: (x["farm_score"], x["plays"]), reverse=True)
-    return sorted_maps[:limit]
+    return candidate_list[:limit]

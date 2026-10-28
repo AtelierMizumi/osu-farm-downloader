@@ -58,7 +58,9 @@ def load_config():
         "default_max_sr": 7.7,
         "min_playcount": 15000,
         "no_video": True,
-        "concurrent_downloads": 3,
+        "preferred_mirror": "auto",
+        "default_status": "ranked",
+        "concurrent_downloads": 4,
         "timeout": 15
     }
 

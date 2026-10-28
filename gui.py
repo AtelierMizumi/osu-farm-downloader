@@ -3,16 +3,19 @@
 
 """
 osu! Farm Map Downloader - Modern Linux GUI (PySide6)
-Tối ưu hóa cho Linux & osu! stable trên ổ cứng ngoài
-Dành cho người chơi: Cao Mi Le (Rank #12k, 9.1k PP)
+Phiên bản 1.1.0: Tải song song đa luồng, Bộ lọc trạng thái map, Tùy chọn nguồn Mirror, Nghe thử Audio Preview
+Dành riêng cho Linux & osu! stable trên ổ cứng ngoài
+Người chơi: Cao Mi Le (Rank #12k, 9.1k PP)
 """
 
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal, QUrl
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 # Import core modules
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -93,15 +96,28 @@ QPushButton#PrimaryBtn:pressed {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #e65595, stop:1 #9f52e6);
 }
 QPushButton#SecondaryBtn {
-    background-color: #245749;
-    border: 1px solid #2ecc71;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2ecc71, stop:1 #27ae60);
+    border: none;
     color: #ffffff;
     font-size: 14px;
     padding: 10px 20px;
     border-radius: 6px;
+    font-weight: bold;
 }
 QPushButton#SecondaryBtn:hover {
-    background-color: #2c6d5b;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3be382, stop:1 #2ecc71);
+}
+QPushButton#AudioBtn {
+    background-color: #2a243a;
+    border: 1px solid #ff66aa;
+    color: #ff66aa;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 12px;
+}
+QPushButton#AudioBtn:hover {
+    background-color: #ff66aa;
+    color: #ffffff;
 }
 QTableWidget {
     background-color: #1b1725;
@@ -153,12 +169,13 @@ class SearchWorker(QThread):
     finished_signal = Signal(list)
     error_signal = Signal(str)
 
-    def __init__(self, min_sr, max_sr, limit, mod, mapper_filter, installed_ids):
+    def __init__(self, min_sr, max_sr, limit, mod, status_filter, mapper_filter, installed_ids):
         super().__init__()
         self.min_sr = min_sr
         self.max_sr = max_sr
         self.limit = limit
         self.mod = mod
+        self.status_filter = status_filter
         self.mapper_filter = mapper_filter
         self.installed_ids = installed_ids
 
@@ -169,6 +186,7 @@ class SearchWorker(QThread):
                 max_sr=self.max_sr,
                 limit=self.limit,
                 mod=self.mod,
+                status_filter=self.status_filter,
                 already_installed_ids=self.installed_ids,
                 mapper_filter=self.mapper_filter if self.mapper_filter != "Tất cả Mappers" else None,
                 progress_callback=lambda c, t, msg: self.progress_signal.emit(c, t, msg)
@@ -177,15 +195,18 @@ class SearchWorker(QThread):
         except Exception as e:
             self.error_signal.emit(str(e))
 
-class DownloadWorker(QThread):
-    file_progress_signal = Signal(int, int, int, float, str)  # sid, dl, total, speed, mirror
-    item_completed_signal = Signal(int, bool, str)            # index, ok, msg
-    all_finished_signal = Signal(int, int, float)             # success, fail, total_mb
+class ParallelDownloadWorker(QThread):
+    row_progress_signal = Signal(int, str, int)  # row_index, status_text, percent
+    overall_progress_signal = Signal(int, int, float, float)  # completed, total, total_mb, speed_mb
+    all_finished_signal = Signal(int, int, float, float)      # success, fail, total_mb, elapsed
 
-    def __init__(self, maps_to_download, songs_path, no_video=True):
+    def __init__(self, selected_items, songs_path, max_workers=4, preferred_mirror="auto", no_video=True):
         super().__init__()
-        self.maps = maps_to_download
+        # selected_items là danh sách tuple (row_index, map_dict)
+        self.selected_items = selected_items
         self.songs_path = songs_path
+        self.max_workers = max_workers
+        self.preferred_mirror = preferred_mirror
         self.no_video = no_video
         self.is_cancelled = False
 
@@ -193,43 +214,73 @@ class DownloadWorker(QThread):
         self.is_cancelled = True
 
     def run(self):
-        success_count = 0
-        fail_count = 0
+        total = len(self.selected_items)
+        completed = 0
+        success = 0
+        fail = 0
         total_bytes = 0
 
-        for idx, m in enumerate(self.maps):
-            if self.is_cancelled:
-                break
+        start_time = time.time()
+        active_speeds = {}
 
-            def cb(sid, dl, total, speed, mirror):
-                self.file_progress_signal.emit(sid, dl, total, speed, mirror)
+        def single_task(item):
+            row_idx, m = item
+            if self.is_cancelled:
+                return row_idx, False, "Đã hủy", 0
+
+            self.row_progress_signal.emit(row_idx, "Đang kết nối...", 5)
+
+            def progress_cb(sid, dl, tot, spd_kb, mir):
+                pct = int(dl / tot * 100) if tot > 0 else 50
+                active_speeds[row_idx] = spd_kb
+                current_total_speed = sum(active_speeds.values()) / 1024.0
+                dl_mb = total_bytes / (1024 * 1024)
+                self.overall_progress_signal.emit(completed, total, dl_mb, current_total_speed)
+                self.row_progress_signal.emit(row_idx, f"Tải {pct}% ({mir})", pct)
 
             ok, msg, path = mirror_downloader.download_beatmapset(
                 m,
                 self.songs_path,
+                preferred_mirror=self.preferred_mirror,
                 no_video=self.no_video,
-                progress_callback=cb
+                progress_callback=progress_cb
             )
 
-            if ok:
-                success_count += 1
-                if path and os.path.exists(path):
-                    total_bytes += os.path.getsize(path)
-            else:
-                fail_count += 1
+            if row_idx in active_speeds:
+                del active_speeds[row_idx]
 
-            self.item_completed_signal.emit(idx, ok, msg)
-            time.sleep(0.2)
+            size = os.path.getsize(path) if ok and path and os.path.exists(path) else 0
+            return row_idx, ok, msg, size
 
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = [executor.submit(single_task, it) for it in self.selected_items]
+            for fut in futures:
+                if self.is_cancelled:
+                    break
+                row_idx, ok, msg, size = fut.result()
+                completed += 1
+                if ok:
+                    success += 1
+                    total_bytes += size
+                    self.row_progress_signal.emit(row_idx, f"✔ {msg}", 100)
+                else:
+                    fail += 1
+                    self.row_progress_signal.emit(row_idx, f"✘ {msg}", 0)
+
+                dl_mb = total_bytes / (1024 * 1024)
+                current_total_speed = sum(active_speeds.values()) / 1024.0
+                self.overall_progress_signal.emit(completed, total, dl_mb, current_total_speed)
+
+        elapsed = max(time.time() - start_time, 0.1)
         total_mb = total_bytes / (1024 * 1024)
-        self.all_finished_signal.emit(success_count, fail_count, total_mb)
+        self.all_finished_signal.emit(success, fail, total_mb, elapsed)
 
 # ----------------- Main GUI Window -----------------
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("osu! Ranked Farm Maps Downloader (Linux & External Drive)")
-        self.resize(1100, 750)
+        self.setWindowTitle("osu! Ranked Farm Maps Downloader (Linux & External Drive) v1.1.0")
+        self.resize(1180, 800)
         self.setStyleSheet(DARK_STYLE)
 
         self.cfg = config.load_config()
@@ -240,6 +291,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.download_worker = None
         self.search_worker = None
 
+        # Audio Preview Player
+        self.media_player = QMediaPlayer()
+        self.audio_output = QAudioOutput()
+        self.media_player.setAudioOutput(self.audio_output)
+        self.audio_output.setVolume(0.8)
+        self.playing_set_id = None
+
         self.init_ui()
 
     def init_ui(self):
@@ -247,14 +305,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(main_widget)
         main_layout = QtWidgets.QVBoxLayout(main_widget)
         main_layout.setContentsMargins(16, 16, 16, 16)
-        main_layout.setSpacing(12)
+        main_layout.setSpacing(10)
 
         # 1. Header & Profile Banner
         header_card = QtWidgets.QFrame()
         header_card.setStyleSheet("background-color: #211d2e; border-radius: 8px; padding: 10px;")
         header_layout = QtWidgets.QHBoxLayout(header_card)
 
-        # User profile text
         prof_info = QtWidgets.QVBoxLayout()
         p_name = QtWidgets.QLabel(f"👤 <b>{self.profile['username']}</b> (ID: {self.profile['id']})")
         p_name.setStyleSheet("font-size: 16px; color: #ff66aa;")
@@ -263,7 +320,7 @@ class MainWindow(QtWidgets.QMainWindow):
             f"⚡ Performance: <b>{self.profile['pp']:,} PP</b> | Acc: <b>{self.profile['hit_accuracy']}%</b> | Plays: {self.profile['play_count']:,}"
         )
         p_stats.setStyleSheet("color: #d1c7e6;")
-        
+
         nm = self.profile["recommended"]["nomod_hd"]
         p_rec = QtWidgets.QLabel(
             f"🎯 <b>Star Rating đề xuất:</b> Nomod: <font color='#2ecc71'><b>{nm['min_sr']}* – {nm['max_sr']}*</b></font> (Target: ~{nm['target_sr']}*) | "
@@ -277,12 +334,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
         header_layout.addStretch()
 
+        # Audio Player Controls in Header
+        audio_box = QtWidgets.QHBoxLayout()
+        self.lbl_now_playing = QtWidgets.QLabel("🎵 Chưa phát audio")
+        self.lbl_now_playing.setStyleSheet("color: #b3a6d4; font-size: 12px; margin-right: 8px;")
+        self.btn_stop_audio = QtWidgets.QPushButton("⏹ Dừng")
+        self.btn_stop_audio.setObjectName("AudioBtn")
+        self.btn_stop_audio.clicked.connect(self.stop_audio)
+        self.btn_stop_audio.setEnabled(False)
+        audio_box.addWidget(self.lbl_now_playing)
+        audio_box.addWidget(self.btn_stop_audio)
+        header_layout.addLayout(audio_box)
+
         main_layout.addWidget(header_card)
 
         # 2. External Drive / Songs Directory Panel
         drive_box = QtWidgets.QGroupBox("💾 Ổ cứng ngoài & Thư mục Songs của osu! stable")
         drive_layout = QtWidgets.QHBoxLayout(drive_box)
-        
+
         self.path_edit = QtWidgets.QLineEdit(self.songs_path)
         self.path_edit.setPlaceholderText("Đường dẫn tới thư mục Songs của osu! (ví dụ /mnt/SSDStorage/osu!/Songs)")
         browse_btn = QtWidgets.QPushButton("📁 Chọn Thư mục")
@@ -296,21 +365,20 @@ class MainWindow(QtWidgets.QMainWindow):
         drive_layout.addWidget(self.lbl_installed, 2)
         main_layout.addWidget(drive_box)
 
-        # 3. Filter Controls Panel
-        filter_box = QtWidgets.QGroupBox("🔍 Bộ lọc Beatmaps Thông Minh (Smart Farm Filter)")
+        # 3. Enhanced Filter Controls Panel
+        filter_box = QtWidgets.QGroupBox("🔍 Bộ lọc Beatmaps Thông Minh (Smart Farm Filter & Status)")
         filter_layout = QtWidgets.QGridLayout(filter_box)
-        filter_layout.setContentsMargins(12, 16, 12, 12)
-        filter_layout.setHorizontalSpacing(15)
-        filter_layout.setVerticalSpacing(10)
+        filter_layout.setContentsMargins(12, 14, 12, 12)
+        filter_layout.setHorizontalSpacing(14)
+        filter_layout.setVerticalSpacing(8)
 
-        # Mode Preset Selector
+        # Row 0: Chế độ & Star Rating
         filter_layout.addWidget(QtWidgets.QLabel("Chế độ chơi:"), 0, 0)
         self.mode_combo = QtWidgets.QComboBox()
         self.mode_combo.addItems(["⚡ Nomod / Hidden Farm", "⏩ DoubleTime (DT) Farm", "🎯 HardRock (HR) Farm"])
         self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
         filter_layout.addWidget(self.mode_combo, 0, 1)
 
-        # Star Rating Spinners
         filter_layout.addWidget(QtWidgets.QLabel("Min Star:"), 0, 2)
         self.spin_min_sr = QtWidgets.QDoubleSpinBox()
         self.spin_min_sr.setRange(1.0, 11.0)
@@ -325,30 +393,49 @@ class MainWindow(QtWidgets.QMainWindow):
         self.spin_max_sr.setValue(nm["max_sr"])
         filter_layout.addWidget(self.spin_max_sr, 0, 5)
 
-        # Mapper filter
-        filter_layout.addWidget(QtWidgets.QLabel("Mapper tủ:"), 1, 0)
-        self.mapper_combo = QtWidgets.QComboBox()
-        self.mapper_combo.addItem("Tất cả Mappers")
-        self.mapper_combo.addItems(map_finder.FARM_MAPPERS)
-        filter_layout.addWidget(self.mapper_combo, 1, 1)
-
-        # Limit
-        filter_layout.addWidget(QtWidgets.QLabel("Số lượng map:"), 1, 2)
-        self.spin_limit = QtWidgets.QSpinBox()
-        self.spin_limit.setRange(5, 100)
-        self.spin_limit.setValue(25)
-        filter_layout.addWidget(self.spin_limit, 1, 3)
-
-        # No video checkbox
-        self.chk_no_video = QtWidgets.QCheckBox("No-Video (Tải siêu nhanh & tiết kiệm ổ cứng)")
-        self.chk_no_video.setChecked(self.cfg.get("no_video", True))
-        filter_layout.addWidget(self.chk_no_video, 1, 4, 1, 2)
-
-        # Search Button
+        # Search Button (Spans 2 rows)
         self.btn_search = QtWidgets.QPushButton("🔍 Tìm Kiếm Map Farm Phù Hợp")
         self.btn_search.setObjectName("PrimaryBtn")
         self.btn_search.clicked.connect(self.start_search)
         filter_layout.addWidget(self.btn_search, 0, 6, 2, 1)
+
+        # Row 1: Tình trạng map, Mapper, Số lượng
+        filter_layout.addWidget(QtWidgets.QLabel("Tình trạng map:"), 1, 0)
+        self.status_combo = QtWidgets.QComboBox()
+        self.status_keys = list(map_finder.STATUS_PRESETS.keys())
+        for k in self.status_keys:
+            self.status_combo.addItem(map_finder.STATUS_PRESETS[k]["name"])
+        filter_layout.addWidget(self.status_combo, 1, 1)
+
+        filter_layout.addWidget(QtWidgets.QLabel("Mapper tủ:"), 1, 2)
+        self.mapper_combo = QtWidgets.QComboBox()
+        self.mapper_combo.addItem("Tất cả Mappers")
+        self.mapper_combo.addItems(map_finder.FARM_MAPPERS)
+        filter_layout.addWidget(self.mapper_combo, 1, 3)
+
+        filter_layout.addWidget(QtWidgets.QLabel("Số lượng map:"), 1, 4)
+        self.spin_limit = QtWidgets.QSpinBox()
+        self.spin_limit.setRange(5, 100)
+        self.spin_limit.setValue(30)
+        filter_layout.addWidget(self.spin_limit, 1, 5)
+
+        # Row 2: Nguồn Mirror & Tải song song (Đa luồng)
+        filter_layout.addWidget(QtWidgets.QLabel("Nguồn Mirror:"), 2, 0)
+        self.mirror_combo = QtWidgets.QComboBox()
+        self.mirror_keys = list(mirror_downloader.MIRROR_PROVIDERS.keys())
+        for k in self.mirror_keys:
+            self.mirror_combo.addItem(mirror_downloader.MIRROR_PROVIDERS[k])
+        filter_layout.addWidget(self.mirror_combo, 2, 1)
+
+        filter_layout.addWidget(QtWidgets.QLabel("Tải song song (Luồng):"), 2, 2)
+        self.spin_threads = QtWidgets.QSpinBox()
+        self.spin_threads.setRange(1, 8)
+        self.spin_threads.setValue(self.cfg.get("concurrent_downloads", 4))
+        filter_layout.addWidget(self.spin_threads, 2, 3)
+
+        self.chk_no_video = QtWidgets.QCheckBox("No-Video (Tải siêu nhanh & tiết kiệm ổ cứng)")
+        self.chk_no_video.setChecked(self.cfg.get("no_video", True))
+        filter_layout.addWidget(self.chk_no_video, 2, 4, 1, 2)
 
         main_layout.addWidget(filter_box)
 
@@ -366,18 +453,20 @@ class MainWindow(QtWidgets.QMainWindow):
         table_header_layout.addWidget(btn_deselect_all)
         main_layout.addLayout(table_header_layout)
 
-        self.table = QtWidgets.QTableWidget(0, 7)
+        # Table with 8 columns: [Chọn, Set ID, Tên bài, Mapper, Diffs, Farm Score, Trạng thái tải, Tags]
+        self.table = QtWidgets.QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels([
-            "Tải", "Set ID", "Tên Bài Hát & Nghệ Sĩ", "Mapper", "Star Rating (Diffs)", "Farm Score", "Đặc điểm / Tags"
+            "Chọn", "ID", "Tên Bài Hát & Nghệ Sĩ", "Mapper", "Star Rating (Diffs)", "Farm Score", "Trạng thái", "Đặc điểm / Tags"
         ])
         self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Interactive)
         self.table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(6, QtWidgets.QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(7, QtWidgets.QHeaderView.Stretch)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table.verticalHeader().setVisible(False)
+        self.table.itemDoubleClicked.connect(self.on_table_double_clicked)
         main_layout.addWidget(self.table)
 
-        # 5. Download & Progress Bar Panel
+        # 5. Download & Parallel Progress Bar Panel
         bottom_box = QtWidgets.QFrame()
         bottom_box.setStyleSheet("background-color: #211d2e; border-radius: 8px; padding: 10px;")
         bottom_layout = QtWidgets.QVBoxLayout(bottom_box)
@@ -386,18 +475,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar = QtWidgets.QProgressBar()
         self.progress_bar.setValue(0)
         self.lbl_speed = QtWidgets.QLabel("Sẵn sàng tải")
-        self.lbl_speed.setStyleSheet("color: #ff66aa; font-weight: bold; min-width: 180px;")
+        self.lbl_speed.setStyleSheet("color: #ff66aa; font-weight: bold; min-width: 220px;")
 
         pbar_layout.addWidget(self.progress_bar, 4)
         pbar_layout.addWidget(self.lbl_speed, 1)
 
         action_layout = QtWidgets.QHBoxLayout()
-        self.btn_download = QtWidgets.QPushButton("⬇ Bắt Đầu Tải Các Map Đã Chọn Về Ổ Cứng")
+        self.btn_download = QtWidgets.QPushButton("⚡ BẮT ĐẦU TẢI SONG SONG VỀ Ổ CỨNG")
         self.btn_download.setObjectName("SecondaryBtn")
-        self.btn_download.clicked.connect(self.start_download)
+        self.btn_download.clicked.connect(self.start_parallel_download)
         self.btn_download.setEnabled(False)
 
-        self.lbl_status = QtWidgets.QLabel("Chưa có map nào được tải.")
+        self.lbl_status = QtWidgets.QLabel("Chưa có tác vụ nào đang chạy.")
         self.lbl_status.setStyleSheet("color: #b3a6d4;")
 
         action_layout.addWidget(self.btn_download, 2)
@@ -452,6 +541,7 @@ class MainWindow(QtWidgets.QMainWindow):
         max_sr = self.spin_max_sr.value()
         limit = self.spin_limit.value()
         mapper = self.mapper_combo.currentText()
+        status_key = self.status_keys[self.status_combo.currentIndex()]
 
         mod = "NM"
         if self.mode_combo.currentIndex() == 1:
@@ -459,11 +549,10 @@ class MainWindow(QtWidgets.QMainWindow):
         elif self.mode_combo.currentIndex() == 2:
             mod = "HR"
 
-        # Cập nhật danh sách map đã cài đặt
         self.installed_ids = config.get_installed_beatmap_ids(songs_dir)
         self.lbl_installed.setText(f"📦 Đã có: <b>{len(self.installed_ids):,} maps</b> (Tự động bỏ qua)")
 
-        self.search_worker = SearchWorker(min_sr, max_sr, limit, mod, mapper, self.installed_ids)
+        self.search_worker = SearchWorker(min_sr, max_sr, limit, mod, status_key, mapper, self.installed_ids)
         self.search_worker.progress_signal.connect(self.on_search_progress)
         self.search_worker.finished_signal.connect(self.on_search_finished)
         self.search_worker.error_signal.connect(self.on_search_error)
@@ -496,31 +585,31 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def populate_table(self, maps):
         self.table.setRowCount(len(maps))
-        self.lbl_table_count.setText(f"<b>Danh sách Beatmap tìm thấy:</b> {len(maps)} maps")
+        self.lbl_table_count.setText(f"<b>Danh sách Beatmap tìm thấy:</b> {len(maps)} maps (Double click để nghe thử preview)")
 
         for row, m in enumerate(maps):
-            # Checkbox
+            # 0. Checkbox
             chk_item = QtWidgets.QTableWidgetItem()
             chk_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
             chk_item.setCheckState(Qt.Checked)
             self.table.setItem(row, 0, chk_item)
 
-            # Set ID
+            # 1. Set ID
             id_item = QtWidgets.QTableWidgetItem(str(m["id"]))
             id_item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 1, id_item)
 
-            # Title & Artist
+            # 2. Title & Artist
             title_text = f"{m['artist']} - {m['title']}"
             title_item = QtWidgets.QTableWidgetItem(title_text)
             self.table.setItem(row, 2, title_item)
 
-            # Creator / Mapper
+            # 3. Creator / Mapper
             creator_item = QtWidgets.QTableWidgetItem(m["creator"])
             creator_item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 3, creator_item)
 
-            # Diffs & Star Rating
+            # 4. Diffs & Star Rating
             diffs_str = ", ".join([f"{d['name']} ({d['sr']}*)" for d in m["valid_diffs"][:3]])
             if len(m["valid_diffs"]) > 3:
                 diffs_str += f" (+{len(m['valid_diffs'])-3})"
@@ -528,7 +617,7 @@ class MainWindow(QtWidgets.QMainWindow):
             diffs_item.setForeground(QtGui.QColor("#2ecc71"))
             self.table.setItem(row, 4, diffs_item)
 
-            # Farm Score
+            # 5. Farm Score
             score_item = QtWidgets.QTableWidgetItem(f"{m['farm_score']}/100")
             score_item.setTextAlignment(Qt.AlignCenter)
             if m['farm_score'] >= 90:
@@ -539,15 +628,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 score_item.setForeground(QtGui.QColor("#e67e22"))
             self.table.setItem(row, 5, score_item)
 
-            # Tags
+            # 6. Status Column
+            status_item = QtWidgets.QTableWidgetItem("Sẵn sàng tải")
+            status_item.setTextAlignment(Qt.AlignCenter)
+            status_item.setForeground(QtGui.QColor("#b3a6d4"))
+            self.table.setItem(row, 6, status_item)
+
+            # 7. Tags
             tags_str = " | ".join(m.get("best_tags", []))
             tags_item = QtWidgets.QTableWidgetItem(tags_str)
             tags_item.setForeground(QtGui.QColor("#ff66aa"))
-            self.table.setItem(row, 6, tags_item)
+            self.table.setItem(row, 7, tags_item)
 
         self.table.resizeColumnsToContents()
         self.table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(6, QtWidgets.QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(7, QtWidgets.QHeaderView.Stretch)
 
     def select_all_maps(self):
         for r in range(self.table.rowCount()):
@@ -561,14 +656,38 @@ class MainWindow(QtWidgets.QMainWindow):
             if item:
                 item.setCheckState(Qt.Unchecked)
 
-    def start_download(self):
-        selected_maps = []
+    def on_table_double_clicked(self, item):
+        row = item.row()
+        if 0 <= row < len(self.current_maps):
+            m = self.current_maps[row]
+            audio_url = m.get("preview_audio")
+            if audio_url:
+                self.play_audio_preview(m["id"], f"{m['artist']} - {m['title']}", audio_url)
+
+    def play_audio_preview(self, set_id, title, audio_url):
+        self.playing_set_id = set_id
+        self.media_player.setSource(QUrl(audio_url))
+        self.media_player.play()
+        self.lbl_now_playing.setText(f"▶ Đang phát: <b>{title[:30]}...</b>")
+        self.lbl_now_playing.setStyleSheet("color: #2ecc71; font-size: 12px; margin-right: 8px;")
+        self.btn_stop_audio.setEnabled(True)
+
+    def stop_audio(self):
+        self.media_player.stop()
+        self.lbl_now_playing.setText("🎵 Chưa phát audio")
+        self.lbl_now_playing.setStyleSheet("color: #b3a6d4; font-size: 12px; margin-right: 8px;")
+        self.btn_stop_audio.setEnabled(False)
+
+    def start_parallel_download(self):
+        selected_items = []
         for r in range(self.table.rowCount()):
             chk = self.table.item(r, 0)
             if chk and chk.checkState() == Qt.Checked:
-                selected_maps.append(self.current_maps[r])
+                selected_items.append((r, self.current_maps[r]))
+                self.table.item(r, 6).setText("Chờ luồng tải...")
+                self.table.item(r, 6).setForeground(QtGui.QColor("#f1c40f"))
 
-        if not selected_maps:
+        if not selected_items:
             QtWidgets.QMessageBox.warning(self, "Chưa chọn map", "Vui lòng tick chọn ít nhất 1 beatmap để tải!")
             return
 
@@ -580,40 +699,54 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_search.setEnabled(False)
         self.btn_download.setEnabled(False)
         self.progress_bar.setValue(0)
-        self.lbl_speed.setText("Bắt đầu tải...")
 
+        max_workers = self.spin_threads.value()
+        pref_mirror = self.mirror_keys[self.mirror_combo.currentIndex()]
         no_video = self.chk_no_video.isChecked()
-        self.download_worker = DownloadWorker(selected_maps, songs_dir, no_video=no_video)
-        self.download_worker.file_progress_signal.connect(self.on_file_progress)
-        self.download_worker.item_completed_signal.connect(self.on_item_completed)
+
+        self.lbl_speed.setText(f"Khởi động {max_workers} luồng...")
+
+        self.download_worker = ParallelDownloadWorker(
+            selected_items,
+            songs_dir,
+            max_workers=max_workers,
+            preferred_mirror=pref_mirror,
+            no_video=no_video
+        )
+        self.download_worker.row_progress_signal.connect(self.on_row_progress)
+        self.download_worker.overall_progress_signal.connect(self.on_overall_progress)
         self.download_worker.all_finished_signal.connect(self.on_download_all_finished)
         self.download_worker.start()
 
-    def on_file_progress(self, sid, dl, total, speed_kb, mirror):
-        pct = int(dl / total * 100) if total > 0 else 0
-        dl_mb = dl / (1024 * 1024)
-        total_mb = total / (1024 * 1024) if total > 0 else 0
-        speed_mb = speed_kb / 1024
+    def on_row_progress(self, row_idx, status_text, percent):
+        item = self.table.item(row_idx, 6)
+        if item:
+            item.setText(status_text)
+            if percent == 100:
+                item.setForeground(QtGui.QColor("#2ecc71"))
+            elif percent > 0:
+                item.setForeground(QtGui.QColor("#3498db"))
+            else:
+                item.setForeground(QtGui.QColor("#e74c3c"))
 
+    def on_overall_progress(self, completed, total, total_mb, speed_mb):
+        pct = int(completed / total * 100) if total > 0 else 0
         self.progress_bar.setValue(pct)
-        self.lbl_speed.setText(f"{mirror}: {speed_mb:.1f} MB/s ({dl_mb:.1f}/{total_mb:.1f}MB)")
+        self.lbl_speed.setText(f"Tải {completed}/{total} maps ({speed_mb:.1f} MB/s)")
+        self.lbl_status.setText(f"Đang tải song song đa luồng... Đã tải {total_mb:.1f} MB")
 
-    def on_item_completed(self, index, ok, msg):
-        status_text = f"[{index + 1}/{len(self.current_maps)}] {msg}"
-        self.lbl_status.setText(status_text)
-
-    def on_download_all_finished(self, success, fail, total_mb):
+    def on_download_all_finished(self, success, fail, total_mb, elapsed):
         self.btn_search.setEnabled(True)
         self.btn_download.setEnabled(True)
         self.progress_bar.setValue(100)
-        self.lbl_speed.setText("Hoàn tất!")
+        self.lbl_speed.setText(f"Hoàn thành ({total_mb:.1f} MB trong {elapsed:.1f}s)")
+        self.lbl_status.setText(f"Đã tải thành công {success} maps! (Thất bại: {fail})")
 
-        # Cập nhật lại số map đã có
         self.installed_ids = config.get_installed_beatmap_ids(self.path_edit.text().strip())
         self.lbl_installed.setText(f"📦 Đã có: <b>{len(self.installed_ids):,} maps</b> (Tự động bỏ qua)")
 
         msg = (
-            f"<b>Đã tải thành công {success} beatmapsets!</b> ({total_mb:.1f} MB)<br>"
+            f"<b>Đã tải thành công {success} beatmapsets!</b> ({total_mb:.1f} MB trong {elapsed:.1f}s)<br>"
             f"{f'Thất bại: {fail} maps<br>' if fail > 0 else ''}"
             f"Vị trí lưu: <code>{self.path_edit.text().strip()}</code><br><br>"
             f"<b>🎮 HƯỚNG DẪN OSU! STABLE TRÊN LINUX:</b><br>"

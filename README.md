@@ -4,138 +4,111 @@
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-blue.svg)](https://archlinux.org/)
 [![GUI: PySide6](https://img.shields.io/badge/GUI-PySide6%20(Qt6)-41cd52.svg)](https://wiki.qt.io/Qt_for_Python)
 [![Profile: Cao Mi Le](https://img.shields.io/badge/Profile-Cao%20Mi%20Le%20(%2312k)-ff66aa.svg)](https://osu.ppy.sh/users/10910765)
+[![Release: v1.1.0](https://img.shields.io/badge/Release-v1.1.0-brightgreen.svg)](https://github.com/AtelierMizumi/osu-farm-downloader/releases)
 
-Công cụ tự động tìm kiếm, lọc và tải beatmap **Ranked**, **nhiều người chơi nhất (Most Played)**, **dễ farm (Comfort / Jump / Flow aim)** từ các Mirror siêu tốc (`osu.direct`, `Catboy/Mino`, `Sayobot`, `Beatconnect`).
+Công cụ tìm kiếm, lọc và tải beatmap **song song đa luồng (Parallel Multi-threading)** từ nhiều nguồn Mirror siêu tốc (`osu.direct`, `Catboy/Mino`, `Sayobot`, `Beatconnect`, `Nerinyan`).
 
-Được trang bị cả giao diện đồ họa **Desktop GUI (PySide6)** hiện đại lẫn giao diện **Terminal CLI**, tối ưu hóa riêng cho người dùng **Linux** và **osu! stable lưu trên ổ cứng ngoài**.
-
----
-
-## 🌟 Tính năng nổi bật
-
-### 1. 🧠 Thuật toán Lọc Map Thông Minh (Smart Farm Score 0 – 100)
-Không chỉ đơn thuần tìm map theo Star Rating, công cụ tính toán điểm số Farmability dựa trên các chỉ số cốt lõi:
-- **Tỷ lệ Pass Rate ($\frac{\text{Pass}}{\text{Plays}}$):** Ưu tiên các map có pass rate $\ge 18\% - 25\%$, chứng minh pattern mượt, công bằng và ít choke ở note cuối. Phạt các map có pass rate $< 8\%$.
-- **Circle Size (CS) Vàng:** Tỉ lệ vàng của jump farm là CS 3.8 – 4.3 (hitbox vừa vặn). Phạt nặng các map CS quá nhỏ ($CS > 4.6$).
-- **Approach Rate (AR) Chuẩn:** AR 9.3 – 9.8 phù hợp phản xạ của người chơi từ 4-digit tới 5-digit rank.
-- **Độ dài tối ưu (Hit Length):** Ưu tiên độ dài TV Size / Cut Ver (65s – 150s) giúp retry nhanh, ít tốn thể lực và đỡ choke.
-- **Phân loại phong cách Mapper:**
-  - *Jump Farm:* Sotarks, Reform, browiec, Nevo, Kowari, fieryrage, Akitoshi, Monstrata, Taeyang, Armin, Doormat.
-  - *Flow Aim / Speed:* Seni, SMOKELIND, Log Off Now, Chanci, Mirash.
-  - *Stream / Finger Control:* Lasse, Awaken, Lami, Djulus, Kroytz.
-
-### 2. 👤 Cá nhân hóa theo Profile Người chơi (`Cao Mi Le`)
-- Tự động đồng bộ và phân tích dữ liệu Top Plays của profile osu! **`Cao Mi Le`** (Rank #12,936 Global | #155 Việt Nam | 9,096 PP).
-- Đề xuất các preset chuẩn xác cho từng mod:
-  - **Nomod / Hidden Farm:** `6.48* – 7.62*` (Trọng tâm: ~`7.03*` | 420pp - 540pp).
-  - **HardRock (HR/HDHR):** `6.10* – 6.75*` (Trọng tâm: ~`6.45*` | 400pp - 450pp).
-  - **DoubleTime (DT/NC):** `4.80* – 5.50*` base SR (-> 6.8* - 7.8* DT).
-
-### 3. 💾 Hỗ trợ Ổ cứng ngoài & osu! stable trên Linux
-- **Tự động nhận diện điểm mount ổ cứng ngoài:** `/mnt/SSDStorage/osu!/Songs`, `/media/...`, `/run/media/...`, hoặc thư mục Wine/Lutris/Bottles.
-- **Chống tải trùng map:** Quét toàn bộ các folder và file `.osz` hiện có trên ổ cứng (hơn 1,600+ maps) trong 0.01s và tự động bỏ qua khi tải, tiết kiệm dung lượng ổ cứng tối đa.
-- **Làm sạch tên file:** Đảm bảo tên file `.osz` an toàn tuyệt đối trên mọi định dạng phân vùng (NTFS, exFAT, ext4).
-
-### 4. ⚡ Hệ thống Multi-Mirror siêu tốc & Fallback tự động
-- Ưu tiên 1: **osu.direct API** (Băng thông cao, không rate-limit khó chịu).
-- Ưu tiên 2: **Catboy (Mino)**.
-- Ưu tiên 3: **Sayobot** (Hỗ trợ mini no-video nhẹ, nhanh).
-- Dự phòng: **Beatconnect**.
-- Tải file dạng `.part` an toàn, kiểm tra magic bytes `PK\x03\x04` trước khi ghi để chống file lỗi hoặc 0-byte.
+Hỗ trợ **Desktop GUI (PySide6)** phong cách osu! và **Terminal CLI**, tối ưu hóa riêng cho người dùng **Linux** và **osu! stable lưu trên ổ cứng ngoài**, đồng thời tùy chỉnh theo trình độ profile **`Cao Mi Le`** (Rank #12k Global / #155 Việt Nam, ~9,100 PP).
 
 ---
 
-## 🖥 Giao diện Đồ họa Desktop GUI (PySide6)
+## 🌟 Tính năng vượt trội (So sánh & Chắt lọc từ các tool GitHub)
 
-Giao diện Dark Mode lấy cảm hứng từ osu! với đầy đủ tính năng:
-- **Profile Card:** Hiển thị Rank, PP, Accuracy và khoảng SR đề xuất.
-- **Thư mục Songs:** Nhận diện sẵn ổ cứng ngoài, có nút chọn đường dẫn nhanh.
-- **Bộ lọc linh hoạt:** Chuyển đổi giữa Nomod, DT Farm, HR Farm hoặc lọc theo Mapper tủ.
-- **Bảng xem trước & Chọn bài:** Xem ID, Tên bài, Mapper, Diffs, Farm Score (0-100) và các Tags đánh giá trước khi quyết định tải.
-- **Tiến trình tải thời gian thực:** Hiển thị tốc độ (MB/s), phần trăm, nguồn mirror và trạng thái từng bài.
+Dựa trên nghiên cứu các công cụ nổi tiếng trên GitHub như *nzbasic/batch-beatmap-downloader*, *osu-collector*, *NexDirect*, dự án đã chắt lọc và tối ưu các chức năng quan trọng nhất:
+
+### 1. ⚡ Tải Song Song Đa Luồng (Parallel Multi-Threading 1 – 8 Threads)
+- Thay vì tải tuần tự từng file mất nhiều thời gian, công cụ phân phối tải song song từ **1 đến 8 luồng đồng thời**.
+- Tốc độ tải thực tế: Đạt **8 – 15 MB/s**, tải 30 mapset trong vòng **chưa đầy 20 – 30 giây**!
+- Cập nhật tiến trình và trạng thái tải chi tiết theo từng dòng trong bảng.
+
+### 2. 🎛 Bộ Lọc Tình Trạng Map (Beatmap Status Filter)
+Hỗ trợ lọc chính xác theo trạng thái xếp hạng:
+- **`Ranked` (Mặc định):** Map chính thức, có điểm PP, có Leaderboard.
+- **`Ranked + Approved`:** Bao gồm cả các map kinh điển được phê duyệt (Approved) có tính PP.
+- **`Loved`:** Các map được cộng đồng bình chọn yêu thích, có bảng xếp hạng Leaderboard riêng.
+- **`Qualified`:** Các map đang trong tuần thử nghiệm cuối cùng trước khi vào Ranked.
+- **`Tất cả có Leaderboard`:** Gộp toàn bộ Ranked + Approved + Loved.
+- **`Tất cả trạng thái`:** Bao gồm cả Pending và Graveyard.
+
+### 3. 🌐 Tùy Chọn Nguồn Mirror Đa Dạng & Smart Fallback
+Hỗ trợ 5 nguồn Mirror hàng đầu với cơ chế tự động chuyển đổi nếu một mirror bị nghẽn:
+1. **osu.direct API** *(Mặc định - Băng thông cao, ổn định nhất)*
+2. **Catboy / Mino (`catboy.best`)** *(Cực kỳ phổ biến trong cộng đồng osu!)*
+3. **Sayobot (`dl.sayobot.cn`)** *(Máy chủ Châu Á, hỗ trợ bản Mini cắt video siêu nhẹ)*
+4. **Beatconnect (`beatconnect.io`)**
+5. **Nerinyan (`api.nerinyan.moe`)**
+
+### 4. 🎧 Nghe Thử Audio Preview Ngay Trong Ứng Dụng
+- Tích hợp trực tiếp trình phát âm thanh mẫu (`QMediaPlayer` + FFmpeg).
+- Chỉ cần **Double-click vào bất kỳ bài hát nào trong bảng** (hoặc nhấn nút Dừng ở góc trên) để nghe thử đoạn cao trào 10 giây trước khi quyết định tải về!
+
+### 5. 🧠 Thuật Toán Smart Farm & Comfort Score (0 – 100)
+- **Tỷ lệ Pass Rate ($\frac{\text{Pass}}{\text{Plays}}$):** Đánh giá pattern mượt mà ($\ge 18\% - 25\%$), phạt các map dễ choke ($< 8\%$).
+- **Hitbox Circle Size (CS) Vàng:** Tỉ lệ vàng của jump farm là **CS 3.8 – 4.3**. Phạt map CS quá nhỏ ($CS > 4.6$).
+- **Approach Rate (AR) Chuẩn:** AR 9.3 – 9.8.
+- **Độ dài TV Size (65s – 150s):** Retry nhanh, đỡ tốn thể lực.
+- **Phân loại Mapper:** Jump Farm (Sotarks, Reform, browiec,...), Flow Aim (Seni, SMOKELIND,...), Stream (Lasse, Awaken,...).
+
+### 6. 💾 Tương Thích Hoàn Hảo Ổ Cứng Ngoài & Linux
+- Tự động nhận diện thư mục Songs của osu! stable trên ổ cứng ngoài: `/mnt/SSDStorage/osu!/Songs`.
+- **Tự động quét và bỏ qua map đã có sẵn** (hơn 1,600+ maps) để tránh trùng lặp.
+- Tên file được làm sạch an toàn cho mọi định dạng phân vùng (NTFS, exFAT, ext4).
 
 ---
 
-## 📥 Cài đặt & Sử dụng
+## 🖥 Giao diện Desktop GUI (PySide6)
 
-### Cách 1: Tải bản thực thi Standalone (Khuyên dùng - Không cần cài Python)
-1. Tải bản build Linux x86_64 mới nhất từ mục [**Releases**](https://github.com/AtelierMizumi/osu-farm-downloader/releases).
-2. Mở terminal tại thư mục chứa file tải về và cấp quyền thực thi:
-   ```bash
-   chmod +x osu-farm-downloader-linux-x86_64
-   ./osu-farm-downloader-linux-x86_64
-   ```
+Khởi chạy bằng lệnh:
+```bash
+osu-dl-gui
+```
+Giao diện bao gồm:
+* **Thẻ Người chơi:** Profile `Cao Mi Le` (Rank #12k, 9.1k PP, 98.32% Acc) & Star Rating gợi ý.
+* **Bộ phát Audio Preview:** Nghe thử bài hát ngay trên thanh tiêu đề.
+* **Thư mục Songs:** Nhận diện sẵn ổ cứng ngoài, có nút chọn đường dẫn nhanh.
+* **Bộ lọc Presets & Tình trạng:** Chuyển đổi nhanh Nomod, DT, HR, Mapper, Tình trạng map (Ranked/Loved...).
+* **Cài đặt Tải song song & Mirror:** Chọn số luồng (1-8 luồng) và mirror mong muốn.
+* **Bảng Map & Checkbox:** Chọn bài linh hoạt, xem Farm Score và Tags đánh giá trước khi tải.
 
-### Cách 2: Chạy trực tiếp từ mã nguồn Python
+---
 
-Yêu cầu: `python >= 3.9` và `PySide6`.
-
-1. Clone repository:
-   ```bash
-   git clone https://github.com/AtelierMizumi/osu-farm-downloader.git
-   cd osu-farm-downloader
-   ```
-
-2. Cài đặt dependencies (nếu chưa có):
-   ```bash
-   pip install -r requirements.txt
-   # hoặc:
-   pip install PySide6
-   ```
-
-3. Khởi chạy:
-   - **Mở giao diện GUI:**
-     ```bash
-     python3 gui.py
-     ```
-   - **Mở giao diện Terminal tương tác:**
-     ```bash
-     python3 osu_dl.py
-     ```
-
-### Cách 3: Chạy nhanh qua dòng lệnh (CLI One-Liner)
-
-Công cụ hỗ trợ các tham số dòng lệnh phong phú cho người thích dùng terminal:
+## 💻 Hướng dẫn Dòng lệnh (CLI One-Liner)
 
 ```bash
-# Tải 30 map farm Nomod/HD chuẩn trình độ:
-python3 osu_dl.py --count 30
+# Tải song song 4 luồng 30 map farm Nomod/HD (6.5* - 7.6*):
+osu-dl --count 30 --threads 4
 
-# Tải 20 map farm của Sotarks:
-python3 osu_dl.py --mapper Sotarks --count 20
+# Tải 20 map Loved có Star Rating từ 6.8* đến 7.5*:
+osu-dl --status loved --min-sr 6.8 --max-sr 7.5 --count 20
 
-# Tải gói DT Farm:
-python3 osu_dl.py --dt --count 25
+# Tải 20 map của Sotarks ưu tiên nguồn Sayobot:
+osu-dl --mapper Sotarks --mirror sayobot --count 20
 
-# Tùy chỉnh khoảng Star Rating bất kỳ:
-python3 osu_dl.py --min-sr 6.8 --max-sr 7.5 --count 15
+# Tải gói DT Farm (tải 6 luồng siêu tốc):
+osu-dl --dt --count 25 --threads 6
 
-# Mở GUI qua cờ lệnh:
-python3 osu_dl.py --gui
+# Mở giao diện Desktop GUI:
+osu-dl --gui
 ```
 
 ---
 
 ## 🎮 Cách nạp map vào osu! stable trên Linux
-
-Sau khi quá trình tải hoàn tất:
-1. Mở **osu! stable** trên Linux (qua Wine, Lutris hoặc Bottles).
-2. Vào màn hình **Solo / Song Select** (chọn bài hát).
-3. Nhấn phím **`F5`** trên bàn phím.
-4. osu! stable sẽ tự động quét thư mục `Songs/` trên ổ cứng ngoài, giải nén các file `.osz` vừa tải và cập nhật ngay vào danh sách bài hát!
+1. Sau khi tải xong, các file `.osz` sẽ nằm sẵn trong thư mục `Songs/` trên ổ cứng ngoài.
+2. Mở **osu! stable** trên Linux (qua Wine, Lutris hoặc Bottles).
+3. Vào màn hình **Solo / Song Select** (chọn bài hát).
+4. Nhấn phím **`F5`** trên bàn phím. osu! stable sẽ tự động quét, giải nén và nạp tất cả các map mới vào game ngay lập tức!
 
 ---
 
 ## 🛠 Tự Build Standalone Binary
-
-Nếu bạn muốn tự đóng gói ra file nhị phân Linux độc lập:
 ```bash
 ./build_release.sh
 ```
-File thực thi độc lập sẽ được tạo trong thư mục `dist/`.
+File thực thi Linux x86_64 độc lập sẽ được tạo trong thư mục `dist/`.
 
 ---
 
 ## 📄 License
 Phát hành theo giấy phép [MIT License](LICENSE).
-Tự do sử dụng, chỉnh sửa và phân phối!
+Mã nguồn công khai: [GitHub Repository](https://github.com/AtelierMizumi/osu-farm-downloader).
